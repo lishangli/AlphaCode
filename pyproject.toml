@@ -1,0 +1,74 @@
+[project]
+name = "alphacode"
+version = "0.1.0"
+description = "ALPHACODE - MCTS-based Code Exploration with Git"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "AlphaCode Team"}
+]
+keywords = ["mcts", "code-agent", "llm", "git", "alphacode"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "pyyaml>=6.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "httpx>=0.28.1",
+]
+
+[project.scripts]
+alphacode = "alphacode.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[tool.uv]
+package = true
+
+[project.urls]
+Homepage = "https://github.com/example/alphacode"
+Documentation = "https://github.com/example/alphacode#readme"
+Repository = "https://github.com/example/alphacode"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["alphacode*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

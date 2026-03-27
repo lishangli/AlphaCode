@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Distribution
+*.manifest
+*.spec
+
+# Logs
+*.log
+logs/
+
+# Local config (keep template)
+config.local.yaml
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific - generated files
+program.py
+quick_sort.py
+quicksort*.py
+test_palindrome.py
+*.egg-info/
+
+# Keep these core files
+!alphacode/**/*.py
+!config.yaml
+!README.md
+!pyproject.toml
+!examples/

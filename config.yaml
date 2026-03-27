@@ -1,0 +1,77 @@
+# MCTS-Agent Configuration
+
+# Search Configuration
+max_iterations: 10
+max_depth: 10
+max_nodes: 100
+
+# UCB Configuration
+exploration_weight: 1.41
+exploration_decay: 0.995
+
+# Island Configuration
+num_islands: 2
+migration_interval: 50
+migration_rate: 0.1
+
+# Evaluation Configuration
+evaluation_timeout: 60
+cascade_evaluation: true
+cascade_thresholds:
+  - 0.3
+  - 0.6
+  - 0.8
+
+# Value function weights
+weight_syntax: 0.2
+weight_tests: 0.3
+weight_quality: 0.2
+weight_progress: 0.3
+
+# Action Generation (2 branches)
+num_actions_per_expand: 2
+max_tool_calls_per_action: 5
+
+# Inspiration Configuration
+num_inspirations: 2
+inspiration_diversity: true
+
+# Pruning Configuration
+prune_threshold: 0.1
+prune_after_visits: 3
+
+# Termination Conditions
+target_score: 0.85
+convergence_window: 10
+convergence_threshold: 0.01
+max_retries: 2
+
+# Intent Detection
+intent_check: true
+
+# Logging Configuration
+log_level: INFO
+log_interval: 2
+save_checkpoints: true
+checkpoint_interval: 5
+
+# Git Configuration
+git_branch_prefix: mcts
+auto_commit: true
+auto_merge_best: true
+
+# LLM Configuration
+llm:
+  model: meta/llama-3.1-8b-instruct
+  api_base: https://integrate.api.nvidia.com/v1
+  api_key: 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
+  temperature: 0.7
+  max_tokens: 4096
+  timeout: 120
+
+# Feature Grid Configuration
+feature_dimensions:
+  - complexity
+  - approach
+  - quality_tier
+feature_bins: 10
