@@ -9,6 +9,15 @@ from typing import Any
 
 import yaml
 
+# Auto-load .env file if exists
+try:
+    from dotenv import load_dotenv
+    # Load .env from current directory or project root
+    load_dotenv()
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass  # python-dotenv not installed, use environment variables directly
+
 
 @dataclass
 class LLMConfig:
