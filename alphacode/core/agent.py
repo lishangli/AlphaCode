@@ -8,6 +8,7 @@ MCTS exploration is only used for code generation tasks.
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -54,10 +55,12 @@ You have access to tools for:
 Use tools when they would help answer the user's question or complete a task.
 For simple questions or chat, you can respond directly without tools.
 
-When writing code, create clean, well-documented implementations.
-When answering questions, be thorough but concise.
+IMPORTANT: After using tools, ALWAYS show the results to the user!
+- If you read a file, show the file contents
+- If you search for files, list the files found
+- If you run a command, show the output
 
-Always explain what you're doing when using tools."""
+Be thorough but concise. Format code and file contents nicely."""
 
     CODE_SYSTEM = """You are ALPHACODE, a code generation assistant.
 
@@ -113,8 +116,8 @@ Create working, production-quality code."""
         system = system_prompt or self.CONVERSATION_SYSTEM
         available_tools = tools or TOOL_DEFINITIONS
 
-        messages = self.conversation_history.copy()
-        messages.append({"role": "user", "content": user_input})
+        # Build initial messages
+        messages = [{"role": "user", "content": user_input}]
 
         all_tool_calls = []
         all_tool_results = []
@@ -123,8 +126,8 @@ Create working, production-quality code."""
         while iteration < self.max_tool_iterations:
             iteration += 1
 
-            # Call LLM with tools
-            response = await self._call_llm_with_history(
+            # Call LLM with current messages
+            response = await self._call_llm(
                 system=system,
                 messages=messages,
                 tools=available_tools,
@@ -154,20 +157,43 @@ Create working, production-quality code."""
                     iterations=iteration,
                 )
 
-            # Execute tool calls
-            tool_results = await self._execute_tools(response.tool_calls)
+            # Has tool calls - execute them
             all_tool_calls.extend(response.tool_calls)
-            all_tool_results.extend(tool_results)
 
-            # Add to messages for next iteration
-            if iteration == 1:
-                messages.append({"role": "user", "content": user_input})
-            else:
-                messages.append({"role": "user", "content": ""})
-            messages.append({
-                "role": "assistant",
-                "content": response.content or "",
-                "tool_calls": [
+            # Execute tools and add results to messages
+            tool_results_for_msg = []
+            for tc in response.tool_calls:
+                tool_name = tc["tool"]
+                tool_args = tc["args"]
+                tool_id = tc["id"]
+
+                logger.info(f"Tool call: {tool_name}({tool_args})")
+
+                result = self.tool_executor.execute({
+                    "tool": tool_name,
+                    "args": tool_args
+                })
+
+                result_str = result.output if result.success else f"Error: {result.error}"
+                logger.debug(f"Tool result: {result_str[:200]}...")
+
+                all_tool_results.append({
+                    "tool_call_id": tool_id,
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result": result_str,
+                    "success": result.success,
+                })
+
+                tool_results_for_msg.append({
+                    "tool_call_id": tool_id,
+                    "content": result_str
+                })
+
+            # Build assistant message with tool calls
+            assistant_msg = {"role": "assistant", "content": response.content}
+            if response.tool_calls:
+                assistant_msg["tool_calls"] = [
                     {
                         "id": tc["id"],
                         "type": "function",
@@ -178,18 +204,15 @@ Create working, production-quality code."""
                     }
                     for tc in response.tool_calls
                 ]
-            })
+            messages.append(assistant_msg)
 
-            # Add tool results
-            for tr in tool_results:
+            # Add tool results to messages
+            for tr in tool_results_for_msg:
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tr["tool_call_id"],
-                    "content": tr["result"]
+                    "content": tr["content"]
                 })
-
-            # Check if we should continue (let LLM decide based on results)
-            # Continue loop to let LLM process tool results
 
         # Max iterations reached
         logger.warning(f"Max tool iterations ({self.max_tool_iterations}) reached")
@@ -205,21 +228,19 @@ Create working, production-quality code."""
             iterations=iteration,
         )
 
-    async def _call_llm_with_history(
+    async def _call_llm(
         self,
         system: str,
         messages: list[dict],
         tools: list[dict],
     ) -> LLMResponse:
-        """Call LLM with full message history."""
+        """Call LLM with messages."""
         # Build full messages
         full_messages = [{"role": "system", "content": system}]
         full_messages.extend(messages)
 
         # Use OpenAI client directly
         client = self.llm_client._get_client()
-
-        import time
         start = time.time()
 
         response = await client.chat.completions.create(
@@ -260,40 +281,6 @@ Create working, production-quality code."""
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason,
         )
-
-    async def _execute_tools(self, tool_calls: list[dict]) -> list[dict]:
-        """
-        Execute tool calls and return results.
-
-        Returns:
-            List of {tool_call_id, tool, result}
-        """
-        results = []
-
-        for tc in tool_calls:
-            tool_name = tc["tool"]
-            tool_args = tc["args"]
-            tool_id = tc["id"]
-
-            logger.info(f"Tool call: {tool_name}({tool_args})")
-
-            result = self.tool_executor.execute({
-                "tool": tool_name,
-                "args": tool_args
-            })
-
-            result_str = result.output if result.success else f"Error: {result.error}"
-            logger.debug(f"Tool result: {result_str[:200]}...")
-
-            results.append({
-                "tool_call_id": tool_id,
-                "tool": tool_name,
-                "args": tool_args,
-                "result": result_str,
-                "success": result.success,
-            })
-
-        return results
 
     def clear_history(self):
         """Clear conversation history."""

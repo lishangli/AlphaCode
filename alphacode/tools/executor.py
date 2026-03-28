@@ -266,6 +266,12 @@ class ToolExecutor:
             offset: Starting line (0-indexed)
             limit: Maximum lines to read
         """
+        # Convert string parameters to int if needed
+        if isinstance(offset, str):
+            offset = int(offset)
+        if isinstance(limit, str):
+            limit = int(limit)
+
         full_path = self._resolve_path(path)
 
         if not os.path.exists(full_path):

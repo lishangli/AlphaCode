@@ -194,24 +194,22 @@ class MCTSCli:
 
     def _show_agent_response(self, response: AgentResponse):
         """Display agent response including tool usage."""
-        # Show tool usage if any
-        if response.tool_calls:
-            print(f"\n{DIM}Tools used:{RESET}")
-            for i, tc in enumerate(response.tool_calls):
-                tool_result = (
-                    response.tool_results[i]
-                    if i < len(response.tool_results)
-                    else None
-                )
-                if tool_result and tool_result.get("success"):
-                    status = GREEN + "✓" + RESET
+        # Show tool results directly (since LLM may not format them well)
+        if response.tool_results:
+            print(f"\n{DIM}Tool results:{RESET}")
+            for tr in response.tool_results:
+                if tr.get("success"):
+                    # Show the actual tool output
+                    print(tr["result"])
                 else:
-                    status = RED + "✗" + RESET
-                print(f"  {status} {tc['tool']}({tc['args']})")
+                    print(f"{RED}Error: {tr.get('result')}{RESET}")
 
-        # Show content
-        if response.content:
+        # Show LLM content if any
+        if response.content and not response.tool_results:
             print(f"\n{CYAN}{response.content}{RESET}\n")
+        elif response.content:
+            # LLM summary after tool results
+            print(f"\n{DIM}{response.content}{RESET}\n")
 
     def _run_mcts_exploration(self, goal: str):
         """Run MCTS exploration for code optimization."""

@@ -39,10 +39,17 @@ class IntentDetector:
     SYSTEM_PROMPT = """You are an intent classifier. Analyze the user's message and determine their intent.
 
 Intent types:
-- code_task: User wants code to be written, generated, or implemented
-- question: User is asking a programming question (no code generation needed)
+- code_task: User wants NEW code to be written, generated, or implemented. Keywords: "write", "create", "implement", "build", "develop", "make a", "code a"
+- question: User is asking for information, explanation, reading files, or understanding code. Keywords: "what", "how", "why", "explain", "read", "show", "list", "find", "search"
 - chitchat: Casual conversation, greeting, or non-programming talk
 - unclear: Cannot determine the intent clearly
+
+Examples:
+- "写一个快速排序函数" → code_task (want new code)
+- "什么是快速排序？" → question (asking for explanation)
+- "读取 cli.py 文件" → question (reading file, not creating code)
+- "项目有什么文件？" → question (asking for information)
+- "你好" → chitchat (casual greeting)
 
 Important: If intent is code_task, preserve the user's EXACT original request in code_hint, do not rewrite or summarize it.
 
