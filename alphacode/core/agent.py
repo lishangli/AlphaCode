@@ -1,80 +1,35 @@
 """
 Unified Agent for ALPHACODE.
 
-Handles all intents with tool support. LLM decides which tools to use.
-MCTS exploration is only used for code generation tasks.
+This is a compatibility layer that wraps the new agent modules.
+New code should use alphacode.agent directly.
 """
 
-import asyncio
-import json
 import logging
-import time
-from dataclasses import dataclass, field
-from typing import Any
 
-from alphacode.llm.client import LLMClient, LLMResponse
-from alphacode.tools.executor import TOOL_DEFINITIONS, ToolExecutor
+from alphacode.agent.base import AgentResponse
+from alphacode.agent.code import CodeAgent
+from alphacode.agent.conversation import ConversationAgent
+from alphacode.llm.client import LLMClient
+from alphacode.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class AgentResponse:
-    """Agent response with tool execution results."""
-    content: str
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_results: list[dict[str, Any]] = field(default_factory=list)
-    iterations: int = 0
+# Re-export for compatibility
+__all__ = ["Agent", "AgentResponse", "ConversationAgent", "CodeAgent"]
 
 
-class Agent:
+class Agent(ConversationAgent):
     """
     Unified agent that handles all intents with tool support.
 
-    The LLM decides which tools to use based on the user's request.
-    This works for:
-    - Questions: LLM may use read/grep/glob to find information
-    - Chitchat: LLM likely uses no tools
-    - Code tasks: LLM uses write/edit/bash, then MCTS takes over for optimization
+    This is a compatibility wrapper around ConversationAgent.
+    New code should use ConversationAgent or CodeAgent directly.
     """
 
-    # System prompts for different modes
-    CONVERSATION_SYSTEM = """You are ALPHACODE, a helpful AI coding assistant.
-
-You can help with:
-- Answering programming questions
-- Exploring and explaining code
-- Writing and modifying code
-- Running tests and commands
-
-RULES FOR TOOL USAGE:
-1. For greetings like "hello", "你好", "hi" - respond WITHOUT tools, just chat naturally
-2. For simple questions like "what is X?" - respond WITHOUT tools, explain directly
-3. For code-related requests like "read file", "show me X.py" - USE read/glob tools
-4. For code generation like "write a function" - USE write/edit tools
-
-Available tools: read, write, edit, glob, grep, bash
-
-Do NOT try to read files like "ALPHACODE.md" or "README.md" unless user explicitly asks.
-
-Be friendly and helpful. For chitchat, respond naturally without tools."""
-
-    CODE_SYSTEM = """You are ALPHACODE, a code generation assistant.
-
-You have access to tools for creating and modifying code.
-
-IMPORTANT RULES:
-1. ALWAYS write code to `program.py` - this is where MCTS will optimize it
-2. Create complete, working implementations
-3. Include proper function definitions and test code if appropriate
-
-Example tool usage:
-- write(path="program.py", content="def solve():\\n    ...")
-- edit(path="program.py", old="old code", new="new code")
-
-Do NOT use other file names like fibonacci.py or main.py. Use program.py only.
-
-After writing code, MCTS will explore variations to find the best solution."""
+    # System prompts (for backward compatibility)
+    CONVERSATION_SYSTEM = ConversationAgent.SYSTEM_PROMPT
+    CODE_SYSTEM = CodeAgent.SYSTEM_PROMPT
 
     def __init__(
         self,
@@ -90,217 +45,9 @@ After writing code, MCTS will explore variations to find the best solution."""
             tool_executor: Tool executor for running tool calls
             max_tool_iterations: Maximum tool call iterations per request
         """
-        self.llm_client = llm_client
-        self.tool_executor = tool_executor
-        self.max_tool_iterations = max_tool_iterations
-        self.conversation_history: list[dict] = []
-
-    async def process(
-        self,
-        user_input: str,
-        system_prompt: str = None,
-        tools: list[dict] = None,
-    ) -> AgentResponse:
-        """
-        Process user input with tool calling loop.
-
-        The LLM can call tools, see results, and decide to call more tools
-        or provide a final response.
-
-        Args:
-            user_input: User's message
-            system_prompt: Optional custom system prompt
-            tools: Optional custom tool definitions
-
-        Returns:
-            AgentResponse with final content and tool execution details
-        """
-        system = system_prompt or self.CONVERSATION_SYSTEM
-        available_tools = tools or TOOL_DEFINITIONS
-
-        # Build initial messages
-        messages = [{"role": "user", "content": user_input}]
-
-        all_tool_calls = []
-        all_tool_results = []
-        iteration = 0
-
-        while iteration < self.max_tool_iterations:
-            iteration += 1
-
-            # Call LLM with current messages
-            response = await self._call_llm(
-                system=system,
-                messages=messages,
-                tools=available_tools,
-            )
-
-            # No tool calls - we're done
-            if not response.tool_calls:
-                # Update conversation history
-                self.conversation_history.append({
-                    "role": "user",
-                    "content": user_input
-                })
-                if response.content:
-                    self.conversation_history.append({
-                        "role": "assistant",
-                        "content": response.content
-                    })
-
-                # Limit history
-                if len(self.conversation_history) > 40:
-                    self.conversation_history = self.conversation_history[-40:]
-
-                return AgentResponse(
-                    content=response.content or "",
-                    tool_calls=all_tool_calls,
-                    tool_results=all_tool_results,
-                    iterations=iteration,
-                )
-
-            # Has tool calls - execute them
-            all_tool_calls.extend(response.tool_calls)
-
-            # Execute tools and add results to messages
-            tool_results_for_msg = []
-            for tc in response.tool_calls:
-                tool_name = tc["tool"]
-                tool_args = tc["args"]
-                tool_id = tc["id"]
-
-                logger.info(f"Tool call: {tool_name}({tool_args})")
-
-                result = self.tool_executor.execute({
-                    "tool": tool_name,
-                    "args": tool_args
-                })
-
-                result_str = result.output if result.success else f"Error: {result.error}"
-                logger.debug(f"Tool result: {result_str[:200]}...")
-
-                all_tool_results.append({
-                    "tool_call_id": tool_id,
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "result": result_str,
-                    "success": result.success,
-                })
-
-                tool_results_for_msg.append({
-                    "tool_call_id": tool_id,
-                    "content": result_str
-                })
-
-            # Build assistant message with tool calls
-            assistant_msg = {"role": "assistant", "content": response.content}
-            if response.tool_calls:
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {
-                            "name": tc["tool"],
-                            "arguments": json.dumps(tc["args"])
-                        }
-                    }
-                    for tc in response.tool_calls
-                ]
-            messages.append(assistant_msg)
-
-            # Add tool results to messages
-            for tr in tool_results_for_msg:
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tr["tool_call_id"],
-                    "content": tr["content"]
-                })
-
-        # Max iterations reached
-        logger.warning(f"Max tool iterations ({self.max_tool_iterations}) reached")
-
-        fallback_msg = (
-            "I've completed the tool operations "
-            "but reached the iteration limit."
-        )
-        return AgentResponse(
-            content=response.content or fallback_msg,
-            tool_calls=all_tool_calls,
-            tool_results=all_tool_results,
-            iterations=iteration,
-        )
-
-    async def _call_llm(
-        self,
-        system: str,
-        messages: list[dict],
-        tools: list[dict],
-    ) -> LLMResponse:
-        """Call LLM with messages."""
-        # Build full messages
-        full_messages = [{"role": "system", "content": system}]
-        full_messages.extend(messages)
-
-        # Use OpenAI client directly
-        client = self.llm_client._get_client()
-        start = time.time()
-
-        response = await client.chat.completions.create(
-            model=self.llm_client.model,
-            messages=full_messages,
-            tools=tools,
-            tool_choice="auto",
-            temperature=self.llm_client.temperature,
-            max_tokens=self.llm_client.max_tokens,
-        )
-
-        choice = response.choices[0]
-        message = choice.message
-
-        # Extract content
-        content = message.content or ""
-
-        # Extract tool calls if present
-        tool_calls = None
-        if message.tool_calls:
-            tool_calls = []
-            for tc in message.tool_calls:
-                tool_calls.append({
-                    "id": tc.id,
-                    "tool": tc.function.name,
-                    "args": json.loads(tc.function.arguments),
-                })
-
-        return LLMResponse(
-            content=content,
-            model=response.model or self.llm_client.model,
-            usage={
-                "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                "total_tokens": response.usage.total_tokens if response.usage else 0,
-            },
-            latency=time.time() - start,
-            tool_calls=tool_calls,
-            finish_reason=choice.finish_reason,
-        )
-
-    def clear_history(self):
-        """Clear conversation history."""
-        self.conversation_history = []
-
-    def process_sync(
-        self,
-        user_input: str,
-        system_prompt: str = None,
-        tools: list[dict] = None,
-    ) -> AgentResponse:
-        """Synchronous version of process."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
-            self.process(user_input, system_prompt, tools)
+        super().__init__(
+            llm_client=llm_client,
+            tool_executor=tool_executor,
+            session_manager=None,  # Will be created if needed
+            max_tool_iterations=max_tool_iterations,
         )

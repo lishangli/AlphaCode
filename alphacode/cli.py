@@ -7,11 +7,12 @@ Interactive command-line interface for code exploration.
 import logging
 import os
 
+from alphacode.agent import AgentResponse, CodeAgent, ConversationAgent
 from alphacode.config import MCTSConfig
-from alphacode.core.agent import Agent, AgentResponse
 from alphacode.core.controller import MCTSController, Solution
 from alphacode.llm.client import LLMClient
 from alphacode.llm.intent import IntentDetector, IntentType
+from alphacode.state.session_manager import SessionManager, SessionState
 from alphacode.tools.executor import ToolExecutor
 from alphacode.utils.display import (
     BLUE,
@@ -48,32 +49,65 @@ class MCTSCli:
         self.controller: MCTSController | None = None
         self.current_solution: Solution | None = None
 
-        # Unified agent for all intents (with tool support)
+        # LLM and tools
         self.llm_client: LLMClient | None = None
         self.tool_executor: ToolExecutor | None = None
-        self.agent: Agent | None = None
         self.intent_detector: IntentDetector | None = None
 
+        # Session management
+        self.session_manager: SessionManager | None = None
+        self.current_session: SessionState | None = None
+
+        # Agents
+        self.conversation_agent: ConversationAgent | None = None
+        self.code_agent: CodeAgent | None = None
+
+    def _init_components(self):
+        """Initialize all components."""
+        if self.llm_client is not None:
+            return
+
+        if not self.config.llm.api_key:
+            return
+
+        # Initialize LLM client
+        self.llm_client = LLMClient(
+            api_key=self.config.llm.api_key,
+            api_base=self.config.llm.api_base,
+            model=self.config.llm.model,
+            temperature=self.config.llm.temperature,
+            max_tokens=self.config.llm.max_tokens,
+            timeout=self.config.llm.timeout,
+            max_retries=self.config.llm.max_retries,
+            enable_cache=self.config.llm.enable_cache,
+            cache_ttl=self.config.llm.cache_ttl,
+        )
+
+        # Initialize tools
+        self.tool_executor = ToolExecutor(root_path=os.getcwd())
+
+        # Initialize session manager
+        self.session_manager = SessionManager(root_path=os.getcwd())
+
+        # Initialize agents
+        self.conversation_agent = ConversationAgent(
+            llm_client=self.llm_client,
+            tool_executor=self.tool_executor,
+            session_manager=self.session_manager,
+        )
+
+        self.code_agent = CodeAgent(
+            llm_client=self.llm_client,
+            tool_executor=self.tool_executor,
+            session_manager=self.session_manager,
+        )
+
+        # Initialize intent detector
+        self.intent_detector = IntentDetector(self.llm_client)
+
     def _init_agent(self):
-        """Initialize the unified agent with tools."""
-        if self.agent is None and self.config.llm.api_key:
-            self.llm_client = LLMClient(
-                api_key=self.config.llm.api_key,
-                api_base=self.config.llm.api_base,
-                model=self.config.llm.model,
-                temperature=self.config.llm.temperature,
-                max_tokens=self.config.llm.max_tokens,
-                timeout=self.config.llm.timeout,
-                max_retries=self.config.llm.max_retries,
-                enable_cache=self.config.llm.enable_cache,
-                cache_ttl=self.config.llm.cache_ttl,
-            )
-            self.tool_executor = ToolExecutor(root_path=os.getcwd())
-            self.agent = Agent(
-                llm_client=self.llm_client,
-                tool_executor=self.tool_executor,
-            )
-            self.intent_detector = IntentDetector(self.llm_client)
+        """Initialize agent (backward compatibility)."""
+        self._init_components()
 
     def run(self):
         """Run the CLI."""
@@ -144,11 +178,11 @@ class MCTSCli:
         All intents can use tools (LLM decides).
         Only CODE_TASK goes to MCTS exploration after initial generation.
         """
-        # Initialize agent if needed
-        self._init_agent()
+        # Initialize components if needed
+        self._init_components()
 
-        # Check if agent is available
-        if not self.agent:
+        # Check if agents are available
+        if not self.conversation_agent:
             print(f"{RED}Error: No LLM client available.{RESET}")
             print("Set NVIDIA_API_KEY or OPENAI_API_KEY environment variable.")
             return
@@ -174,14 +208,11 @@ class MCTSCli:
         print(intent_msg)
 
         # For CODE_TASK, we use MCTS for exploration
-        # For other intents, use agent with tools
+        # For other intents, use conversation agent with tools
         if intent_result.intent == IntentType.CODE_TASK:
-            # Let agent do initial code generation with tools
+            # Let code agent do initial generation
             print(f"\n{DIM}Generating initial solution...{RESET}")
-            agent_response = self.agent.process_sync(
-                user_input,
-                system_prompt=Agent.CODE_SYSTEM,
-            )
+            agent_response = self.code_agent.process_sync(user_input)
 
             # Show what agent did
             self._show_agent_response(agent_response)
@@ -191,9 +222,9 @@ class MCTSCli:
             self._run_mcts_exploration(goal)
 
         else:
-            # For questions/chitchat - use agent with tools
+            # For questions/chitchat - use conversation agent
             print(f"\n{DIM}Processing with tools...{RESET}")
-            agent_response = self.agent.process_sync(user_input)
+            agent_response = self.conversation_agent.process_sync(user_input)
 
             # Show response
             self._show_agent_response(agent_response)
@@ -471,8 +502,8 @@ class MCTSCli:
 
     def _clear_conversation(self):
         """Clear conversation history."""
-        if self.agent:
-            self.agent.clear_history()
+        if self.conversation_agent:
+            self.conversation_agent.clear_history()
             print(f"{GREEN}✓ Conversation history cleared.{RESET}")
         else:
             print(f"{YELLOW}No conversation history to clear.{RESET}")
