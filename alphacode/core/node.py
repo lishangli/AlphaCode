@@ -2,11 +2,11 @@
 MCTS Node data structures.
 """
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
-from enum import Enum
 import time
 import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any
 
 
 class NodeStatus(Enum):
@@ -22,21 +22,21 @@ class NodeStatus(Enum):
 class FeatureCoords:
     """
     MAP-Elites feature coordinates.
-    
+
     Represents a position in the feature space.
     """
     complexity: int = 0        # Complexity bin (0-9)
     approach: int = 0          # Approach type bin (0-9)
     quality_tier: int = 0      # Quality tier bin (0-9)
-    
+
     def to_tuple(self) -> tuple:
         """Convert to tuple for use as dict key."""
         return (self.complexity, self.approach, self.quality_tier)
-    
+
     def to_key(self) -> str:
         """Convert to string key."""
         return f"{self.complexity}-{self.approach}-{self.quality_tier}"
-    
+
     @classmethod
     def from_key(cls, key: str) -> "FeatureCoords":
         """Create from string key."""
@@ -52,24 +52,24 @@ class FeatureCoords:
 class Action:
     """
     Composite action: a group of related tool calls.
-    
+
     Design principle:
     - One action = one meaningful improvement attempt
     - Not a single tool call, but a coherent set of operations
     """
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     description: str = ""
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
     reasoning: str = ""
-    
+
     # Execution results
     success: bool = False
-    error: Optional[str] = None
-    
+    error: str | None = None
+
     # Confidence score (0.0-1.0) for smart execution ordering
     confidence: float = 0.5
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -80,9 +80,9 @@ class Action:
             "error": self.error,
             "confidence": self.confidence,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Action":
+    def from_dict(cls, data: dict[str, Any]) -> "Action":
         """Create from dictionary."""
         return cls(
             id=data.get("id", str(uuid.uuid4())[:8]),
@@ -99,7 +99,7 @@ class Action:
 class EvaluationResult:
     """
     Evaluation result for a node.
-    
+
     Contains:
     - Main score
     - Individual metrics
@@ -107,21 +107,21 @@ class EvaluationResult:
     """
     # Main score
     score: float = 0.0
-    
+
     # Individual metrics
-    metrics: Dict[str, float] = field(default_factory=dict)
-    
+    metrics: dict[str, float] = field(default_factory=dict)
+
     # Artifacts
-    artifacts: Dict[str, Any] = field(default_factory=dict)
-    
+    artifacts: dict[str, Any] = field(default_factory=dict)
+
     # Evaluation level (cascade)
     level: int = 0  # 0=syntax, 1=tests, 2=quality, 3=integration
-    
+
     def is_valid(self) -> bool:
         """Check if result is valid."""
         return self.score > 0 or len(self.metrics) > 0
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "score": self.score,
@@ -129,9 +129,9 @@ class EvaluationResult:
             "artifacts": self.artifacts,
             "level": self.level,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "EvaluationResult":
+    def from_dict(cls, data: dict[str, Any]) -> "EvaluationResult":
         """Create from dictionary."""
         return cls(
             score=data.get("score", 0.0),
@@ -145,7 +145,7 @@ class EvaluationResult:
 class MCTSNode:
     """
     MCTS search tree node.
-    
+
     Core design:
     - State represented by Git commit hash
     - Contains MCTS statistics
@@ -155,69 +155,69 @@ class MCTSNode:
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     commit_hash: str = ""
     session_id: str = ""
-    
+
     # ========== Tree Structure ==========
-    parent_id: Optional[str] = None
-    children_ids: List[str] = field(default_factory=list)
+    parent_id: str | None = None
+    children_ids: list[str] = field(default_factory=list)
     depth: int = 0
-    
+
     # ========== Action ==========
-    action: Optional[Action] = None
-    
+    action: Action | None = None
+
     # ========== MCTS Statistics ==========
     visits: int = 0
     value_sum: float = 0.0
     value_avg: float = 0.0
-    
+
     # UCB cache
     ucb_score: float = 0.0
-    
+
     # ========== Evaluation ==========
-    evaluation: Optional[EvaluationResult] = None
+    evaluation: EvaluationResult | None = None
     status: NodeStatus = NodeStatus.PENDING
-    
+
     # ========== MAP-Elites ==========
-    feature_coords: Optional[FeatureCoords] = None
-    
+    feature_coords: FeatureCoords | None = None
+
     # ========== Island ==========
     island_id: int = 0
-    
+
     # ========== Metadata ==========
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    
+
     # ========== Code Cache ==========
-    _code_cache: Optional[str] = field(default=None, repr=False)
-    
+    _code_cache: str | None = field(default=None, repr=False)
+
     # ========== Artifacts ==========
-    artifacts: Dict[str, Any] = field(default_factory=dict)
-    
+    artifacts: dict[str, Any] = field(default_factory=dict)
+
     @property
     def code(self) -> str:
         """Get node code (requires GitStateManager to populate cache)."""
         return self._code_cache or ""
-    
+
     @code.setter
     def code(self, value: str):
         """Set code cache."""
         self._code_cache = value
-    
+
     def update_stats(self, value: float):
         """Update MCTS statistics."""
         self.visits += 1
         self.value_sum += value
         self.value_avg = self.value_sum / self.visits
         self.updated_at = time.time()
-    
+
     def is_leaf(self) -> bool:
         """Check if node is a leaf (no children)."""
         return len(self.children_ids) == 0
-    
+
     def is_root(self) -> bool:
         """Check if node is root (no parent)."""
         return self.parent_id is None
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "id": self.id,
@@ -239,9 +239,9 @@ class MCTSNode:
             "updated_at": self.updated_at,
             "artifacts": self.artifacts,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MCTSNode":
+    def from_dict(cls, data: dict[str, Any]) -> "MCTSNode":
         """Create from dictionary."""
         node = cls(
             id=data.get("id", str(uuid.uuid4())[:8]),
@@ -260,17 +260,17 @@ class MCTSNode:
             updated_at=data.get("updated_at", time.time()),
             artifacts=data.get("artifacts", {}),
         )
-        
+
         # Restore action
         if data.get("action"):
             node.action = Action.from_dict(data["action"])
-        
+
         # Restore evaluation
         if data.get("evaluation"):
             node.evaluation = EvaluationResult.from_dict(data["evaluation"])
-        
+
         # Restore feature coords
         if data.get("feature_coords"):
             node.feature_coords = FeatureCoords.from_key(data["feature_coords"])
-        
+
         return node

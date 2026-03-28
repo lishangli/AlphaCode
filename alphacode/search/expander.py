@@ -4,14 +4,13 @@ Action expander for MCTS-Agent.
 Generates candidate actions using LLM.
 """
 
-import json
-import logging
 import asyncio
+import logging
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 from alphacode.config import MCTSConfig
-from alphacode.core.node import MCTSNode, Action
+from alphacode.core.node import Action, MCTSNode
 from alphacode.llm.client import LLMClient
 from alphacode.llm.prompts import PromptBuilder
 
@@ -21,12 +20,12 @@ logger = logging.getLogger(__name__)
 class ActionExpander:
     """
     Action expander using LLM.
-    
+
     Generates candidate improvement actions.
     """
-    
+
     def __init__(
-        self, 
+        self,
         config: MCTSConfig,
         llm_client: LLMClient = None,
         prompt_builder: PromptBuilder = None
@@ -34,27 +33,27 @@ class ActionExpander:
         self.config = config
         self.llm_client = llm_client
         self.prompt_builder = prompt_builder or PromptBuilder()
-    
+
     def generate_actions(
         self,
-        prompt: Dict[str, str],
+        prompt: dict[str, str],
         num_actions: int = None,
-    ) -> List[Action]:
+    ) -> list[Action]:
         """
         Generate actions from prompt.
-        
+
         Args:
             prompt: Dict with 'system' and 'user' keys
             num_actions: Number of actions to generate
-            
+
         Returns:
             List of Action objects
         """
         num_actions = num_actions or self.config.num_actions_per_expand
-        
+
         if not self.llm_client:
             return self._generate_default_actions(num_actions)
-        
+
         try:
             # Call LLM
             response = asyncio.run(
@@ -64,23 +63,23 @@ class ActionExpander:
                     temperature=0.7,
                 )
             )
-            
+
             return self._parse_actions(response, num_actions)
-            
+
         except Exception as e:
             logger.warning(f"LLM action generation failed: {e}")
             return self._generate_default_actions(num_actions)
-    
+
     def _parse_actions(
-        self, 
-        response: Dict[str, Any],
+        self,
+        response: dict[str, Any],
         num_actions: int
-    ) -> List[Action]:
+    ) -> list[Action]:
         """Parse LLM response into actions."""
         actions = []
-        
+
         action_list = response.get("actions", [])
-        
+
         for i, action_data in enumerate(action_list[:num_actions]):
             try:
                 action = Action(
@@ -92,13 +91,13 @@ class ActionExpander:
                 actions.append(action)
             except Exception as e:
                 logger.warning(f"Failed to parse action {i}: {e}")
-        
+
         return actions
-    
-    def _generate_default_actions(self, num_actions: int) -> List[Action]:
+
+    def _generate_default_actions(self, num_actions: int) -> list[Action]:
         """Generate default actions when LLM is unavailable."""
         actions = []
-        
+
         for i in range(num_actions):
             action = Action(
                 id=str(uuid.uuid4())[:8],
@@ -107,21 +106,21 @@ class ActionExpander:
                 tool_calls=[],
             )
             actions.append(action)
-        
+
         return actions
-    
+
     def generate_with_templates(
         self,
         goal: str,
         current_code: str,
         node: MCTSNode,
-        inspirations: List[MCTSNode],
-        previous_attempts: List[Dict],
-        artifacts: Dict[str, Any],
-    ) -> List[Action]:
+        inspirations: list[MCTSNode],
+        previous_attempts: list[dict],
+        artifacts: dict[str, Any],
+    ) -> list[Action]:
         """
         Generate actions using prompt templates.
-        
+
         Args:
             goal: User goal
             current_code: Current code
@@ -129,7 +128,7 @@ class ActionExpander:
             inspirations: Inspiration nodes
             previous_attempts: Previous attempts
             artifacts: Error artifacts
-            
+
         Returns:
             List of actions
         """
@@ -142,53 +141,53 @@ class ActionExpander:
             artifacts=artifacts,
             num_actions=self.config.num_actions_per_expand,
         )
-        
+
         return self.generate_actions(prompt)
 
 
 class RuleBasedExpander(ActionExpander):
     """
     Rule-based action expander.
-    
+
     Generates actions based on code analysis rules.
     """
-    
+
     def generate_actions(
         self,
-        prompt: Dict[str, str],
+        prompt: dict[str, str],
         num_actions: int = None,
-    ) -> List[Action]:
+    ) -> list[Action]:
         """Generate actions based on rules."""
         actions = []
-        
+
         # Extract code from prompt
         code = self._extract_code(prompt.get("user", ""))
-        
+
         if code:
             # Generate rule-based actions
             actions.extend(self._suggest_improvements(code))
-        
+
         # Fill remaining with defaults
         while len(actions) < (num_actions or 3):
             actions.append(self._generate_default_actions(1)[0])
-        
+
         return actions[:num_actions or 3]
-    
+
     def _extract_code(self, text: str) -> str:
         """Extract code from text."""
         import re
-        
+
         # Look for code blocks
         match = re.search(r'```\w*\n(.*?)\n```', text, re.DOTALL)
         if match:
             return match.group(1)
-        
+
         return ""
-    
-    def _suggest_improvements(self, code: str) -> List[Action]:
+
+    def _suggest_improvements(self, code: str) -> list[Action]:
         """Suggest improvements based on code analysis."""
         actions = []
-        
+
         # Check for missing docstrings
         if '"""' not in code and "'''" not in code:
             actions.append(Action(
@@ -206,7 +205,7 @@ class RuleBasedExpander(ActionExpander):
                     }
                 ]
             ))
-        
+
         # Check for long functions
         lines = code.split("\n")
         if len(lines) > 50:
@@ -216,7 +215,7 @@ class RuleBasedExpander(ActionExpander):
                 reasoning="Function is too long, consider breaking it up",
                 tool_calls=[]
             ))
-        
+
         # Check for error handling
         if "try:" not in code and "except" not in code:
             actions.append(Action(
@@ -225,5 +224,5 @@ class RuleBasedExpander(ActionExpander):
                 reasoning="No error handling detected",
                 tool_calls=[]
             ))
-        
+
         return actions

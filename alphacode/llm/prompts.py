@@ -4,20 +4,21 @@ Prompt builder for MCTS-Agent.
 Constructs prompts for LLM interactions.
 """
 
-from typing import Dict, List, Any, Optional
-from alphacode.core.node import MCTSNode, EvaluationResult
+from typing import Any
+
+from alphacode.core.node import EvaluationResult, MCTSNode
 
 
 class PromptBuilder:
     """
     Prompt builder.
-    
+
     Constructs prompts for:
     - Action generation (expand phase)
     - Progress evaluation
     - Code quality assessment
     """
-    
+
     # System prompts
     EXPAND_SYSTEM = """You are an expert programmer using MCTS (Monte Carlo Tree Search) to explore code solutions.
 
@@ -47,11 +48,11 @@ Consider:
 - Completeness: Is it a full solution or partial?
 
 Return only a JSON object with your assessment."""
-    
+
     def __init__(self):
         self.templates = self._load_templates()
-    
-    def _load_templates(self) -> Dict[str, str]:
+
+    def _load_templates(self) -> dict[str, str]:
         """Load prompt templates."""
         return {
             "expand_user": self._expand_user_template,
@@ -62,20 +63,20 @@ Return only a JSON object with your assessment."""
         """Template for evaluate user prompt."""
         # Placeholder for template system
         return ""
-    
+
     def build_expand_prompt(
         self,
         goal: str,
         current_code: str,
         node: MCTSNode,
-        inspirations: List[MCTSNode],
-        previous_attempts: List[Dict],
-        artifacts: Dict[str, Any],
+        inspirations: list[MCTSNode],
+        previous_attempts: list[dict],
+        artifacts: dict[str, Any],
         num_actions: int = 3,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Build prompt for expand phase.
-        
+
         Args:
             goal: User goal
             current_code: Current code state
@@ -84,7 +85,7 @@ Return only a JSON object with your assessment."""
             previous_attempts: Previous failed attempts
             artifacts: Error messages, outputs
             num_actions: Number of actions to generate
-            
+
         Returns:
             Dict with 'system' and 'user' keys
         """
@@ -92,19 +93,19 @@ Return only a JSON object with your assessment."""
             f"## Goal\n{goal}\n",
             f"## Current Code\n```\n{self._truncate_code(current_code, 2000)}\n```\n",
         ]
-        
+
         # Current metrics
         if node and node.evaluation:
             user_parts.append(
                 f"## Current Metrics\n{self._format_metrics(node.evaluation)}\n"
             )
-        
+
         # Errors from last attempt
         if artifacts and node:
             error_section = self._format_artifacts(artifacts)
             if error_section:
                 user_parts.append(f"## Errors\n{error_section}\n")
-        
+
         # Previous attempts
         if previous_attempts and node:
             user_parts.append("## Previous Attempts\n")
@@ -115,7 +116,7 @@ Return only a JSON object with your assessment."""
                     user_parts.append(f"Error: {attempt['error']}\n")
                 if attempt.get('score'):
                     user_parts.append(f"Score: {attempt['score']:.2f}\n")
-        
+
         # Inspirations
         if inspirations:
             user_parts.append("## Inspiration Programs\n")
@@ -123,34 +124,34 @@ Return only a JSON object with your assessment."""
             for i, insp in enumerate(inspirations):
                 user_parts.append(f"### Inspiration {i+1} (score: {insp.value_avg:.2f})\n")
                 user_parts.append(f"```\n{self._truncate_code(insp.code, 500)}\n```\n\n")
-        
+
         # Task
-        user_parts.append(f"""
+        user_parts.append("""
 Generate 2 DIFFERENT code solutions for the goal above.
 
 Return ONLY valid JSON (no markdown, no explanation):
-{{"actions":[{{"description":"method1","confidence":0.8,"tool_calls":[{{"tool":"write","args":{{"path":"program.py","content":"code here"}}}}]}},{{"description":"method2","confidence":0.7,"tool_calls":[{{"tool":"write","args":{{"path":"program.py","content":"code here"}}}}]}}]}}
+{"actions":[{"description":"method1","confidence":0.8,"tool_calls":[{"tool":"write","args":{"path":"program.py","content":"code here"}}]},{"description":"method2","confidence":0.7,"tool_calls":[{"tool":"write","args":{"path":"program.py","content":"code here"}}]}]}
 """)
-        
+
         return {
             "system": self.EXPAND_SYSTEM,
             "user": "\n".join(user_parts),
         }
-    
+
     def build_evaluate_prompt(
         self,
         goal: str,
         code: str,
         previous_score: float = None,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """
         Build prompt for progress evaluation.
-        
+
         Args:
             goal: User goal
             code: Code to evaluate
             previous_score: Previous best score
-            
+
         Returns:
             Dict with 'system' and 'user' keys
         """
@@ -174,17 +175,17 @@ Evaluate this code's progress toward the goal. Return JSON:
   "suggestions": ["suggestion1"]
 }}
 ```"""
-        
+
         return {
             "system": self.EVALUATE_SYSTEM,
             "user": user,
         }
-    
-    def build_quality_prompt(self, code: str) -> Dict[str, str]:
+
+    def build_quality_prompt(self, code: str) -> dict[str, str]:
         """Build prompt for code quality assessment."""
         system = """You are a code quality expert. Assess the given code.
 Return only a JSON object with your assessment."""
-        
+
         user = f"""## Code
 ```
 {self._truncate_code(code, 2000)}
@@ -201,9 +202,9 @@ Assess code quality. Return JSON:
   "suggestions": ["suggestion1"]
 }}
 ```"""
-        
+
         return {"system": system, "user": user}
-    
+
     def _format_metrics(self, evaluation: EvaluationResult) -> str:
         """Format evaluation metrics."""
         lines = []
@@ -214,26 +215,26 @@ Assess code quality. Return JSON:
                 lines.append(f"- {name}: {value}")
         lines.append(f"- **Score**: {evaluation.score:.3f}")
         return "\n".join(lines)
-    
-    def _format_artifacts(self, artifacts: Dict[str, Any]) -> str:
+
+    def _format_artifacts(self, artifacts: dict[str, Any]) -> str:
         """Format artifacts (errors, outputs)."""
         parts = []
-        
+
         if artifacts.get("stderr"):
             parts.append(f"```\n{artifacts['stderr'][:500]}\n```")
         if artifacts.get("syntax_error"):
             parts.append(f"Syntax error: {artifacts['syntax_error']}")
         if artifacts.get("test_failures"):
             parts.append(f"Test failures:\n{artifacts['test_failures'][:500]}")
-        
+
         return "\n".join(parts)
-    
+
     def _truncate_code(self, code: str, max_length: int) -> str:
         """Truncate code if too long."""
         if len(code) <= max_length:
             return code
         return code[:max_length] + f"\n... (truncated, {len(code)} total chars)"
-    
+
     def _expand_user_template(self, **kwargs) -> str:
         """Template for expand user prompt."""
         # Placeholder for template system

@@ -8,16 +8,16 @@ Uses OpenAI SDK for better reliability:
 - Proper error handling
 """
 
-import os
-import json
-import logging
 import asyncio
 import hashlib
-from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+import json
+import logging
+import os
 import time
+from dataclasses import dataclass
+from typing import Any
 
-from openai import AsyncOpenAI, APIError, RateLimitError, APITimeoutError
+from openai import APIError, APITimeoutError, AsyncOpenAI, RateLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +27,12 @@ class LLMResponse:
     """LLM response."""
     content: str
     model: str
-    usage: Dict[str, int]
+    usage: dict[str, int]
     latency: float
     # Entropy information
     entropy: float = 0.5
     confidence: float = 0.5
-    logprobs: Optional[List[float]] = None
+    logprobs: list[float] | None = None
     entropy_decision: str = "multi"
     # Cache info
     from_cache: bool = False
@@ -41,18 +41,18 @@ class LLMResponse:
 class LLMClient:
     """
     LLM client using OpenAI SDK.
-    
+
     Features:
     - Built-in retry with exponential backoff
     - Connection pooling
     - Request caching (optional)
     - Environment variable API key
     """
-    
+
     # Shared client instance (connection pool)
-    _client: Optional[AsyncOpenAI] = None
-    _cache: Optional[Any] = None
-    
+    _client: AsyncOpenAI | None = None
+    _cache: Any | None = None
+
     def __init__(
         self,
         api_key: str = None,
@@ -67,7 +67,7 @@ class LLMClient:
     ):
         """
         Initialize LLM client.
-        
+
         Args:
             api_key: API key (defaults to env vars: NVIDIA_API_KEY, OPENAI_API_KEY)
             api_base: API base URL
@@ -80,7 +80,11 @@ class LLMClient:
             cache_ttl: Cache TTL in seconds
         """
         # API key priority: param > NVIDIA_API_KEY > OPENAI_API_KEY
-        self.api_key = api_key or os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        self.api_key = (
+            api_key
+            or os.environ.get("NVIDIA_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+        )
         self.api_base = api_base.rstrip("/")
         self.model = model
         self.temperature = temperature
@@ -89,10 +93,10 @@ class LLMClient:
         self.max_retries = max_retries
         self.enable_cache = enable_cache
         self.cache_ttl = cache_ttl
-        
+
         if not self.api_key:
             logger.warning("No API key. Set NVIDIA_API_KEY or OPENAI_API_KEY env var.")
-        
+
         # Initialize cache
         if enable_cache and LLMClient._cache is None:
             try:
@@ -104,7 +108,7 @@ class LLMClient:
             except ImportError:
                 logger.warning("diskcache not installed, caching disabled")
                 self.enable_cache = False
-    
+
     def _get_client(self) -> AsyncOpenAI:
         """Get or create shared OpenAI client."""
         if LLMClient._client is None:
@@ -115,13 +119,13 @@ class LLMClient:
                 max_retries=self.max_retries,
             )
         return LLMClient._client
-    
+
     def _cache_key(self, prompt: str, system: str, temperature: float, logprobs: bool) -> str:
         """Generate cache key."""
         key_data = f"{prompt}|{system}|{temperature}|{logprobs}|{self.model}"
         return hashlib.md5(key_data.encode()).hexdigest()
-    
-    def _get_from_cache(self, key: str) -> Optional[LLMResponse]:
+
+    def _get_from_cache(self, key: str) -> LLMResponse | None:
         """Get response from cache."""
         if not self.enable_cache or LLMClient._cache is None:
             return None
@@ -134,7 +138,7 @@ class LLMClient:
         except Exception as e:
             logger.debug(f"Cache read error: {e}")
             return None
-    
+
     def _save_to_cache(self, key: str, response: LLMResponse):
         """Save response to cache."""
         if not self.enable_cache or LLMClient._cache is None:
@@ -144,7 +148,7 @@ class LLMClient:
             logger.debug(f"Cache saved: {key[:8]}")
         except Exception as e:
             logger.debug(f"Cache write error: {e}")
-    
+
     async def generate(
         self,
         prompt: str,
@@ -156,7 +160,7 @@ class LLMClient:
     ) -> LLMResponse:
         """
         Generate response from LLM.
-        
+
         Args:
             prompt: User prompt
             system: System message
@@ -164,29 +168,29 @@ class LLMClient:
             max_tokens: Override max tokens
             logprobs: Whether to return logprobs
             top_logprobs: Number of top logprobs
-            
+
         Returns:
             LLMResponse
         """
         temperature = temperature or self.temperature
         max_tokens = max_tokens or self.max_tokens
-        
+
         # Check cache
         cache_key = self._cache_key(prompt, system or "", temperature, logprobs)
         cached = self._get_from_cache(cache_key)
         if cached:
             return cached
-        
+
         start_time = time.time()
-        
+
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        
+
         try:
             client = self._get_client()
-            
+
             # Build request kwargs
             kwargs = {
                 "model": self.model,
@@ -194,35 +198,35 @@ class LLMClient:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
-            
+
             if logprobs:
                 kwargs["logprobs"] = True
                 kwargs["top_logprobs"] = top_logprobs
-            
+
             response = await client.chat.completions.create(**kwargs)
-            
+
             choice = response.choices[0]
             content = choice.message.content
-            
+
             # Calculate entropy if logprobs available
             entropy = 0.5
             confidence = 0.5
             token_logprobs = None
             entropy_decision = "multi"
-            
+
             if logprobs and choice.logprobs and choice.logprobs.content:
                 from alphacode.llm.entropy import EntropyAnalyzer
-                
+
                 logprobs_content = choice.logprobs.content
                 token_logprobs = [t.logprob for t in logprobs_content]
-                
+
                 analyzer = EntropyAnalyzer()
                 entropy_result = analyzer.analyze(logprobs_content=logprobs_content)
-                
+
                 entropy = entropy_result.entropy
                 confidence = entropy_result.confidence
                 entropy_decision = entropy_result.decision
-            
+
             result = LLMResponse(
                 content=content,
                 model=response.model or self.model,
@@ -237,25 +241,25 @@ class LLMClient:
                 logprobs=token_logprobs,
                 entropy_decision=entropy_decision,
             )
-            
+
             # Save to cache
             self._save_to_cache(cache_key, result)
-            
+
             return result
-            
+
         except RateLimitError as e:
             logger.error(f"Rate limit hit: {e}")
-            raise Exception(f"Rate limit exceeded, please wait: {e}")
+            raise Exception(f"Rate limit exceeded, please wait: {e}") from e
         except APITimeoutError as e:
             logger.error(f"API timeout after {self.timeout}s")
-            raise Exception(f"Request timed out after {self.timeout}s")
+            raise Exception(f"Request timed out after {self.timeout}s") from e
         except APIError as e:
             logger.error(f"API error: {e}")
-            raise Exception(f"API error: {e}")
+            raise Exception(f"API error: {e}") from e
         except Exception as e:
             logger.exception(f"Unexpected error: {e}")
             raise
-    
+
     async def generate_stream(
         self,
         prompt: str,
@@ -265,20 +269,20 @@ class LLMClient:
     ):
         """
         Generate streaming response.
-        
+
         Yields:
             str: Text chunks
         """
         temperature = temperature or self.temperature
         max_tokens = max_tokens or self.max_tokens
-        
+
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
-        
+
         client = self._get_client()
-        
+
         stream = await client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -286,11 +290,11 @@ class LLMClient:
             max_tokens=max_tokens,
             stream=True,
         )
-        
+
         async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
-    
+
     def generate_sync(
         self,
         prompt: str,
@@ -304,7 +308,7 @@ class LLMClient:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         response = loop.run_until_complete(
             self.generate(
                 prompt=prompt,
@@ -313,30 +317,30 @@ class LLMClient:
                 max_tokens=max_tokens,
             )
         )
-        
+
         return response.content
-    
+
     async def generate_json(
         self,
         prompt: str,
         system: str = None,
         temperature: float = 0.3,
         logprobs: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate JSON response.
         """
         json_system = (system or "") + "\n\nRespond with valid JSON only. No explanations."
-        
+
         response = await self.generate(
             prompt=prompt,
             system=json_system,
             temperature=temperature,
             logprobs=logprobs,
         )
-        
+
         content = response.content.strip()
-        
+
         # Remove markdown code blocks
         if content.startswith("```"):
             lines = content.split("\n")
@@ -349,18 +353,17 @@ class LLMClient:
                         break
                 else:
                     content = "\n".join(lines[1:])
-        
+
         content = content.strip()
-        
+
         # Parse JSON
         try:
             result = json.loads(content)
         except json.JSONDecodeError:
             # Try to extract JSON
-            import re
             first_brace = content.find('{')
             last_brace = content.rfind('}')
-            
+
             if first_brace >= 0 and last_brace > first_brace:
                 json_str = content[first_brace:last_brace + 1]
                 open_braces = json_str.count('{')
@@ -369,19 +372,19 @@ class LLMClient:
                     json_str += '}' * (open_braces - close_braces)
                 try:
                     result = json.loads(json_str)
-                except:
+                except json.JSONDecodeError:
                     result = {"error": "Parse failed", "raw": content[:500]}
             else:
                 result = {"error": "No JSON found", "raw": content[:500]}
-        
+
         # Add entropy info
         if logprobs:
             result["_entropy"] = response.entropy
             result["_confidence"] = response.confidence
             result["_decision"] = response.entropy_decision
-        
+
         return result
-    
+
     async def generate_with_entropy(
         self,
         prompt: str,
@@ -396,14 +399,14 @@ class LLMClient:
             logprobs=True,
             top_logprobs=5,
         )
-    
+
     @classmethod
     def clear_cache(cls):
         """Clear the LLM response cache."""
         if cls._cache is not None:
             cls._cache.clear()
             logger.info("LLM cache cleared")
-    
+
     @classmethod
     def close(cls):
         """Close the shared client."""
@@ -415,17 +418,17 @@ class LLMClient:
 
 class MockLLMClient(LLMClient):
     """Mock LLM client for testing."""
-    
-    def __init__(self, responses: List[str] = None):
+
+    def __init__(self, responses: list[str] = None):
         super().__init__(api_key="mock", enable_cache=False)
         self.responses = responses or ["Mock response"]
         self.call_count = 0
-    
+
     async def generate(self, prompt: str, system: str = None, **kwargs) -> LLMResponse:
         """Return mock response."""
         response = self.responses[self.call_count % len(self.responses)]
         self.call_count += 1
-        
+
         return LLMResponse(
             content=response,
             model="mock",

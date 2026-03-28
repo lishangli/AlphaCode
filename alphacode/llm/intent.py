@@ -5,7 +5,6 @@ Classifies user input to determine if it's a programming task.
 """
 
 import logging
-from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -26,16 +25,16 @@ class IntentResult:
     intent: IntentType
     confidence: float
     reason: str
-    code_hint: Optional[str] = None  # 如果是代码任务，提取的具体需求
+    code_hint: str | None = None  # 如果是代码任务，提取的具体需求
 
 
 class IntentDetector:
     """
     Intent detector.
-    
+
     Uses LLM to classify user input.
     """
-    
+
     SYSTEM_PROMPT = """You are an intent classifier. Analyze the user's message and determine their intent.
 
 Intent types:
@@ -50,14 +49,14 @@ Respond with JSON only: {"intent": "type", "confidence": 0.0-1.0, "reason": "bri
 
     def __init__(self, llm_client):
         self.llm_client = llm_client
-    
+
     async def detect(self, user_input: str) -> IntentResult:
         """
         Detect user intent.
-        
+
         Args:
             user_input: User's input message
-            
+
         Returns:
             IntentResult with classification
         """
@@ -69,7 +68,7 @@ Respond with JSON only: {"intent": "type", "confidence": 0.0-1.0, "reason": "bri
                 reason="No LLM available, assuming code task",
                 code_hint=user_input,
             )
-        
+
         prompt = f"""User message: "{user_input}"
 
 Classify the intent. Is this asking for code to be written?"""
@@ -80,12 +79,12 @@ Classify the intent. Is this asking for code to be written?"""
                 system=self.SYSTEM_PROMPT,
                 temperature=0.1,
             )
-            
+
             intent_str = response.get("intent", "unclear")
             confidence = response.get("confidence", 0.5)
             reason = response.get("reason", "")
             code_hint = response.get("code_hint")
-            
+
             # Map string to enum
             intent_map = {
                 "code_task": IntentType.CODE_TASK,
@@ -93,26 +92,26 @@ Classify the intent. Is this asking for code to be written?"""
                 "chitchat": IntentType.CHITCHAT,
                 "unclear": IntentType.UNCLEAR,
             }
-            
+
             intent = intent_map.get(intent_str, IntentType.UNCLEAR)
-            
+
             return IntentResult(
                 intent=intent,
                 confidence=confidence,
                 reason=reason,
                 code_hint=code_hint if intent == IntentType.CODE_TASK else None,
             )
-            
+
         except Exception as e:
             logger.warning(f"Intent detection failed: {e}")
             # Default to code task to avoid missing actual tasks
             return IntentResult(
                 intent=IntentType.CODE_TASK,
                 confidence=0.5,
-                reason=f"Detection failed, defaulting to code task",
+                reason="Detection failed, defaulting to code task",
                 code_hint=user_input,
             )
-    
+
     def detect_sync(self, user_input: str) -> IntentResult:
         """Synchronous intent detection."""
         import asyncio
@@ -121,7 +120,7 @@ Classify the intent. Is this asking for code to be written?"""
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
+
         return loop.run_until_complete(self.detect(user_input))
 
 
@@ -133,19 +132,19 @@ def get_response_for_intent(intent_result: IntentResult) -> str:
             "For programming questions, I can try to generate example code if you'd like. "
             "Would you like me to create some code related to your question?"
         )
-    
+
     elif intent_result.intent == IntentType.CHITCHAT:
         return (
             "Hello! I'm MCTS-Agent, a code exploration assistant. "
             "I can help you write and improve code through iterative search. "
             "Tell me what code you'd like me to create!"
         )
-    
+
     elif intent_result.intent == IntentType.UNCLEAR:
         return (
             "I'm not sure what you're asking for. "
             "I specialize in writing and improving code. "
             "Could you describe what code you'd like me to create?"
         )
-    
+
     return ""

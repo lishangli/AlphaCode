@@ -1,41 +1,40 @@
 """
-Tests for MCTS-Agent.
+Tests for ALPHACODE.
 """
 
 import pytest
 import tempfile
-import os
 
-from mcts_agent.config import MCTSConfig, LLMConfig
-from mcts_agent.core.node import MCTSNode, NodeStatus, Action, EvaluationResult, FeatureCoords
-from mcts_agent.core.tree import SearchTree, FeatureGrid, Island
-from mcts_agent.tools.executor import ToolExecutor
-from mcts_agent.state.git_manager import GitStateManager
+from alphacode.config import MCTSConfig, LLMConfig
+from alphacode.core.node import MCTSNode, NodeStatus, Action, EvaluationResult, FeatureCoords
+from alphacode.core.tree import SearchTree, FeatureGrid, Island
+from alphacode.tools.executor import ToolExecutor
+from alphacode.state.git_manager import GitStateManager
 
 
 class TestConfig:
     """Test configuration."""
-    
+
     def test_default_config(self):
         """Test default configuration values."""
         config = MCTSConfig()
-        
-        assert config.max_iterations == 100
+
+        assert config.max_iterations == 10
         assert config.exploration_weight == 1.41
-        assert config.num_islands == 4
-    
+        assert config.num_islands == 2
+
     def test_llm_config(self):
         """Test LLM configuration."""
         config = LLMConfig(model="gpt-4o")
-        
+
         assert config.model == "gpt-4o"
         assert config.temperature == 0.7
-    
+
     def test_config_to_dict(self):
         """Test configuration serialization."""
         config = MCTSConfig()
         data = config.to_dict()
-        
+
         assert "max_iterations" in data
         assert "llm" in data
 
