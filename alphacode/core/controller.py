@@ -705,32 +705,35 @@ Respond with just a number (e.g., "0.9" or "0.3")."""
         goal_lower = goal.lower()
         code_lower = code.lower()
 
-        # Important: we want to check if the code implements the core concept
-        # not whether it contains the exact words from the goal
-
-        # Core programming concepts that indicate relevance
+        # Core programming concepts with Chinese translations
         concept_keywords = {
-            "prime": ["prime", "is_prime", "check_prime"],
-            "sort": ["sort", "sorted", "quicksort", "mergesort", "bubblesort"],
-            "search": ["search", "find", "binary_search", "linear_search"],
-            "tree": ["tree", "node", "binary_tree", "bst"],
-            "list": ["list", "array", "linked_list"],
-            "stack": ["stack", "push", "pop"],
-            "queue": ["queue", "enqueue", "dequeue"],
-            "graph": ["graph", "vertex", "edge", "bfs", "dfs"],
-            "palindrome": ["palindrome", "is_palindrome"],
-            "factorial": ["factorial", "fact"],
-            "fibonacci": ["fibonacci", "fib"],
-            "reverse": ["reverse", "reversed"],
-            "binary": ["binary", "0b", "bin("],
-            "hash": ["hash", "dict", "dictionary", "map"],
+            "prime": ["prime", "is_prime", "check_prime", "质数", "素数"],
+            "sort": ["sort", "sorted", "quicksort", "mergesort", "bubblesort", "排序"],
+            "search": ["search", "find", "binary_search", "linear_search", "查找", "搜索"],
+            "tree": ["tree", "node", "binary_tree", "bst", "树"],
+            "list": ["list", "array", "linked_list", "链表", "列表"],
+            "stack": ["stack", "push", "pop", "栈"],
+            "queue": ["queue", "enqueue", "dequeue", "队列"],
+            "graph": ["graph", "vertex", "edge", "bfs", "dfs", "图"],
+            "palindrome": ["palindrome", "is_palindrome", "回文"],
+            "factorial": ["factorial", "fact", "阶乘"],
+            "fibonacci": ["fibonacci", "fib", "斐波那契"],
+            "reverse": ["reverse", "reversed", "反转", "逆序"],
+            "binary": ["binary", "0b", "bin(", "二进制"],
+            "hash": ["hash", "dict", "dictionary", "map", "哈希", "字典"],
+            "sum": ["sum", "add", "求和", "累加"],
+            "max": ["max", "maximum", "最大"],
+            "min": ["min", "minimum", "最小"],
+            "count": ["count", "统计", "计数"],
         }
 
         # Find what concept the goal is about
         matched_concepts = []
         for concept, keywords in concept_keywords.items():
-            if concept in goal_lower:
-                matched_concepts.append((concept, keywords))
+            for kw in keywords:
+                if kw in goal_lower:
+                    matched_concepts.append((concept, keywords))
+                    break
 
         if not matched_concepts:
             # No specific concept found, check for general programming terms
