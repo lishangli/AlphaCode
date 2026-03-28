@@ -147,6 +147,12 @@ class MCTSCli:
         # Initialize agent if needed
         self._init_agent()
 
+        # Check if agent is available
+        if not self.agent:
+            print(f"{RED}Error: No LLM client available.{RESET}")
+            print("Set NVIDIA_API_KEY or OPENAI_API_KEY environment variable.")
+            return
+
         # Detect intent
         print(f"\n{DIM}Analyzing your request...{RESET}")
 
