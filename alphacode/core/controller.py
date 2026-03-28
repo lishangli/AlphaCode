@@ -125,6 +125,9 @@ class MCTSController:
                 temperature=self.config.llm.temperature,
                 max_tokens=self.config.llm.max_tokens,
                 timeout=self.config.llm.timeout,
+                max_retries=self.config.llm.max_retries,
+                enable_cache=self.config.llm.enable_cache,
+                cache_ttl=self.config.llm.cache_ttl,
             )
             self.evaluator.llm_client = self.llm_client
             self.intent_detector = IntentDetector(self.llm_client)

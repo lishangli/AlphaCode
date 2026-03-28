@@ -64,10 +64,13 @@ auto_merge_best: true
 llm:
   model: meta/llama-3.1-8b-instruct
   api_base: https://integrate.api.nvidia.com/v1
-  api_key: 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
+  # api_key: Set via NVIDIA_API_KEY or OPENAI_API_KEY environment variable
   temperature: 0.7
   max_tokens: 4096
   timeout: 120
+  max_retries: 3
+  enable_cache: true
+  cache_ttl: 3600  # 1 hour
 
 # Feature Grid Configuration
 feature_dimensions:

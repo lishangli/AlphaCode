@@ -13,20 +13,28 @@ import os
 class LLMConfig:
     """LLM configuration"""
     
-    model: str = "minimaxai/minimax-m2.5"
+    model: str = "meta/llama-3.1-8b-instruct"
     api_key: Optional[str] = None
     api_base: str = "https://integrate.api.nvidia.com/v1"
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: int = 120
     
+    # Retry configuration
+    max_retries: int = 3
+    
+    # Cache configuration
+    enable_cache: bool = True
+    cache_ttl: int = 3600  # 1 hour
+    
     # Multi-model ensemble
     models: List[Dict[str, Any]] = field(default_factory=list)
     
     def __post_init__(self):
         # Load API key from environment if not set
+        # Priority: NVIDIA_API_KEY > OPENAI_API_KEY
         if self.api_key is None:
-            self.api_key = os.environ.get("OPENAI_API_KEY")
+            self.api_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
 
 @dataclass
