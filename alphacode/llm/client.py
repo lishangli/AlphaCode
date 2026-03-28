@@ -295,6 +295,42 @@ class LLMClient:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
 
+    async def generate_with_context(
+        self,
+        system: str,
+        messages: list[dict],
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> str:
+        """
+        Generate with message context (for multi-turn conversations).
+
+        Args:
+            system: System message
+            messages: Message history (list of {role, content})
+            temperature: Override temperature
+            max_tokens: Override max tokens
+
+        Returns:
+            Response content string
+        """
+        temperature = temperature or self.temperature
+        max_tokens = max_tokens or self.max_tokens
+
+        full_messages = [{"role": "system", "content": system}]
+        full_messages.extend(messages)
+
+        client = self._get_client()
+
+        response = await client.chat.completions.create(
+            model=self.model,
+            messages=full_messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        return response.choices[0].message.content
+
     def generate_sync(
         self,
         prompt: str,

@@ -9,7 +9,12 @@ import os
 
 from alphacode.config import MCTSConfig
 from alphacode.core.controller import MCTSController, Solution
-from alphacode.llm.intent import IntentType, get_response_for_intent
+from alphacode.llm.client import LLMClient
+from alphacode.llm.intent import (
+    ConversationHandler,
+    IntentDetector,
+    IntentType,
+)
 from alphacode.utils.display import (
     BLUE,
     BOLD,
@@ -42,6 +47,28 @@ class MCTSCli:
         self.config = config or MCTSConfig()
         self.controller: MCTSController | None = None
         self.current_solution: Solution | None = None
+
+        # For handling conversations (non-code intents)
+        self.llm_client: LLMClient | None = None
+        self.conversation_handler: ConversationHandler | None = None
+        self.intent_detector: IntentDetector | None = None
+
+    def _init_conversation(self):
+        """Initialize LLM client for conversations."""
+        if self.llm_client is None and self.config.llm.api_key:
+            self.llm_client = LLMClient(
+                api_key=self.config.llm.api_key,
+                api_base=self.config.llm.api_base,
+                model=self.config.llm.model,
+                temperature=self.config.llm.temperature,
+                max_tokens=self.config.llm.max_tokens,
+                timeout=self.config.llm.timeout,
+                max_retries=self.config.llm.max_retries,
+                enable_cache=self.config.llm.enable_cache,
+                cache_ttl=self.config.llm.cache_ttl,
+            )
+            self.conversation_handler = ConversationHandler(self.llm_client)
+            self.intent_detector = IntentDetector(self.llm_client)
 
     def run(self):
         """Run the CLI."""
@@ -95,6 +122,8 @@ class MCTSCli:
             self._continue_exploration()
         elif cmd_lower in ["/report", "/r"]:
             self._show_report()
+        elif cmd_lower in ["/clear"]:
+            self._clear_conversation()
         elif cmd_lower in ["/config"]:
             self._show_config()
         elif cmd_lower in ["/quit", "/q", "/exit"]:
@@ -105,16 +134,25 @@ class MCTSCli:
 
     def _process_input(self, user_input: str):
         """
-        Process user input with intent detection.
+        Process user input with intent detection and proper conversation handling.
         """
         print(f"\n{DIM}Analyzing your request...{RESET}")
 
-        # Create temporary controller for intent check (without initializing session)
-        temp_controller = MCTSController(self.config)
-        temp_controller._init_llm()
+        # Initialize conversation handler if needed
+        self._init_conversation()
 
-        # Check intent
-        intent_result = temp_controller.check_intent(user_input)
+        # Check intent using intent detector
+        if self.intent_detector:
+            intent_result = self.intent_detector.detect_sync(user_input)
+        else:
+            # Fallback: assume code task
+            from alphacode.llm.intent import IntentResult
+            intent_result = IntentResult(
+                intent=IntentType.CODE_TASK,
+                confidence=0.5,
+                reason="No LLM for intent detection",
+                code_hint=user_input,
+            )
 
         intent_msg = (
             f"{DIM}Intent: {intent_result.intent.value} "
@@ -122,13 +160,22 @@ class MCTSCli:
         )
         print(intent_msg)
 
-        # Handle non-code intents
+        # Handle non-code intents with actual LLM response
         if intent_result.intent != IntentType.CODE_TASK:
-            response = get_response_for_intent(intent_result)
+            if self.conversation_handler:
+                print(f"\n{DIM}Generating response...{RESET}")
+                response = self.conversation_handler.respond_sync(
+                    user_input, intent_result
+                )
+            else:
+                # Fallback to static response
+                from alphacode.llm.intent import get_response_for_intent
+                response = get_response_for_intent(intent_result)
+
             print(f"\n{CYAN}{response}{RESET}\n")
             return
 
-        # It's a code task - create fresh controller and run MCTS
+        # It's a code task - create controller and run MCTS
         self.controller = MCTSController(self.config)
         goal = intent_result.code_hint or user_input
         self._solve(goal)
@@ -200,8 +247,10 @@ class MCTSCli:
         help_text = f"""
 {BOLD}ALPHACODE Commands:{RESET}
 
-{BOLD}Solving Goals:{RESET}
-  <goal description>    Start exploring solutions for the goal
+{BOLD}Conversation & Code:{RESET}
+  <any message>         Chat or describe a coding goal
+                        - Questions: I'll answer with explanations
+                        - Code tasks: I'll explore solutions via MCTS
 
 {BOLD}Information:{RESET}
   /help, /h             Show this help message
@@ -215,17 +264,20 @@ class MCTSCli:
 {BOLD}Actions:{RESET}
   /adopt                Adopt best solution (merge to main)
   /continue, /c         Continue exploration
+  /clear                Clear conversation history
   /quit, /q             Exit ALPHACODE
 
 {BOLD}Examples:{RESET}
-  ❯ Implement a binary search tree with insert and delete
-  ❯ Optimize this function for performance
-  ❯ Add error handling to the API client
+  ❯ What is quick sort and how does it work?    (I'll explain)
+  ❯ Implement a binary search tree              (I'll generate code)
+  ❯ Optimize this function for performance      (I'll explore solutions)
+  ❯ Hello!                                       (I'll chat with you)
 
 {BOLD}Tips:{RESET}
-  • Be specific about what you want
-  • Mention constraints (performance, readability, etc.)
-  • Check alternatives if best solution isn't ideal
+  • Ask programming questions - I'll explain concepts
+  • Describe code tasks - I'll use MCTS to explore solutions
+  • Be specific about constraints (performance, readability)
+  • Check /alternatives if best solution isn't ideal
 """
         print(help_text)
 
@@ -385,6 +437,14 @@ class MCTSCli:
             return
 
         print(self.current_solution.get_report())
+
+    def _clear_conversation(self):
+        """Clear conversation history."""
+        if self.conversation_handler:
+            self.conversation_handler.clear_history()
+            print(f"{GREEN}✓ Conversation history cleared.{RESET}")
+        else:
+            print(f"{YELLOW}No conversation history to clear.{RESET}")
 
     def _show_config(self):
         """Show current configuration."""
