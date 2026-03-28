@@ -8,13 +8,11 @@ import logging
 import os
 
 from alphacode.config import MCTSConfig
+from alphacode.core.agent import Agent, AgentResponse
 from alphacode.core.controller import MCTSController, Solution
 from alphacode.llm.client import LLMClient
-from alphacode.llm.intent import (
-    ConversationHandler,
-    IntentDetector,
-    IntentType,
-)
+from alphacode.llm.intent import IntentDetector, IntentType
+from alphacode.tools.executor import ToolExecutor
 from alphacode.utils.display import (
     BLUE,
     BOLD,
@@ -41,6 +39,8 @@ class MCTSCli:
     ALPHACODE CLI.
 
     Interactive interface for code exploration.
+    All intents can use tools (controlled by LLM).
+    Only CODE_TASK goes through MCTS exploration for optimization.
     """
 
     def __init__(self, config: MCTSConfig = None):
@@ -48,14 +48,15 @@ class MCTSCli:
         self.controller: MCTSController | None = None
         self.current_solution: Solution | None = None
 
-        # For handling conversations (non-code intents)
+        # Unified agent for all intents (with tool support)
         self.llm_client: LLMClient | None = None
-        self.conversation_handler: ConversationHandler | None = None
+        self.tool_executor: ToolExecutor | None = None
+        self.agent: Agent | None = None
         self.intent_detector: IntentDetector | None = None
 
-    def _init_conversation(self):
-        """Initialize LLM client for conversations."""
-        if self.llm_client is None and self.config.llm.api_key:
+    def _init_agent(self):
+        """Initialize the unified agent with tools."""
+        if self.agent is None and self.config.llm.api_key:
             self.llm_client = LLMClient(
                 api_key=self.config.llm.api_key,
                 api_base=self.config.llm.api_base,
@@ -67,7 +68,11 @@ class MCTSCli:
                 enable_cache=self.config.llm.enable_cache,
                 cache_ttl=self.config.llm.cache_ttl,
             )
-            self.conversation_handler = ConversationHandler(self.llm_client)
+            self.tool_executor = ToolExecutor(root_path=os.getcwd())
+            self.agent = Agent(
+                llm_client=self.llm_client,
+                tool_executor=self.tool_executor,
+            )
             self.intent_detector = IntentDetector(self.llm_client)
 
     def run(self):
@@ -77,7 +82,7 @@ class MCTSCli:
         print(f"{BOLD}Working Directory:{RESET} {os.getcwd()}")
         print(f"{BOLD}Model:{RESET} {self.config.llm.model}")
         print()
-        print(f"Type {BOLD}help{RESET} for commands, or describe your goal to start.")
+        print(f"Type {BOLD}help{RESET} for commands, or start chatting with me.")
         print()
 
         while True:
@@ -91,7 +96,7 @@ class MCTSCli:
                 if user_input.startswith("/"):
                     self._handle_command(user_input)
                 else:
-                    # Process user input
+                    # Process user input with unified agent
                     self._process_input(user_input)
 
             except (KeyboardInterrupt, EOFError):
@@ -134,18 +139,20 @@ class MCTSCli:
 
     def _process_input(self, user_input: str):
         """
-        Process user input with intent detection and proper conversation handling.
+        Process user input with unified agent.
+
+        All intents can use tools (LLM decides).
+        Only CODE_TASK goes to MCTS exploration after initial generation.
         """
+        # Initialize agent if needed
+        self._init_agent()
+
+        # Detect intent
         print(f"\n{DIM}Analyzing your request...{RESET}")
 
-        # Initialize conversation handler if needed
-        self._init_conversation()
-
-        # Check intent using intent detector
         if self.intent_detector:
             intent_result = self.intent_detector.detect_sync(user_input)
         else:
-            # Fallback: assume code task
             from alphacode.llm.intent import IntentResult
             intent_result = IntentResult(
                 intent=IntentType.CODE_TASK,
@@ -160,35 +167,56 @@ class MCTSCli:
         )
         print(intent_msg)
 
-        # Handle non-code intents with actual LLM response
-        if intent_result.intent != IntentType.CODE_TASK:
-            if self.conversation_handler:
-                print(f"\n{DIM}Generating response...{RESET}")
-                response = self.conversation_handler.respond_sync(
-                    user_input, intent_result
+        # For CODE_TASK, we use MCTS for exploration
+        # For other intents, use agent with tools
+        if intent_result.intent == IntentType.CODE_TASK:
+            # Let agent do initial code generation with tools
+            print(f"\n{DIM}Generating initial solution...{RESET}")
+            agent_response = self.agent.process_sync(
+                user_input,
+                system_prompt=Agent.CODE_SYSTEM,
+            )
+
+            # Show what agent did
+            self._show_agent_response(agent_response)
+
+            # Now run MCTS exploration for optimization
+            goal = intent_result.code_hint or user_input
+            self._run_mcts_exploration(goal)
+
+        else:
+            # For questions/chitchat - use agent with tools
+            print(f"\n{DIM}Processing with tools...{RESET}")
+            agent_response = self.agent.process_sync(user_input)
+
+            # Show response
+            self._show_agent_response(agent_response)
+
+    def _show_agent_response(self, response: AgentResponse):
+        """Display agent response including tool usage."""
+        # Show tool usage if any
+        if response.tool_calls:
+            print(f"\n{DIM}Tools used:{RESET}")
+            for i, tc in enumerate(response.tool_calls):
+                tool_result = (
+                    response.tool_results[i]
+                    if i < len(response.tool_results)
+                    else None
                 )
-            else:
-                # Fallback to static response
-                from alphacode.llm.intent import get_response_for_intent
-                response = get_response_for_intent(intent_result)
+                if tool_result and tool_result.get("success"):
+                    status = GREEN + "✓" + RESET
+                else:
+                    status = RED + "✗" + RESET
+                print(f"  {status} {tc['tool']}({tc['args']})")
 
-            print(f"\n{CYAN}{response}{RESET}\n")
-            return
+        # Show content
+        if response.content:
+            print(f"\n{CYAN}{response.content}{RESET}\n")
 
-        # It's a code task - create controller and run MCTS
-        self.controller = MCTSController(self.config)
-        goal = intent_result.code_hint or user_input
-        self._solve(goal)
-
-    def _solve(self, goal: str):
-        """
-        Solve a programming goal.
-
-        Args:
-            goal: User's goal description
-        """
+    def _run_mcts_exploration(self, goal: str):
+        """Run MCTS exploration for code optimization."""
         print(f"\n{Display.separator()}")
-        print(f"{CYAN}Goal:{RESET} {goal}")
+        print(f"{CYAN}MCTS Exploration:{RESET} {goal}")
         print(f"{Display.separator()}\n")
 
         # Check for existing code
@@ -200,11 +228,9 @@ class MCTSCli:
             with open(program_file) as f:
                 initial_code = f.read()
 
-        # Create controller if not exists
-        if not self.controller:
-            self.controller = MCTSController(self.config)
+        # Create controller and run MCTS
+        self.controller = MCTSController(self.config)
 
-        # Run search
         start_msg = f"{DIM}Starting exploration "
         start_msg += f"(max {self.config.max_iterations} iterations)...{RESET}\n"
         print(start_msg)
@@ -245,12 +271,13 @@ class MCTSCli:
     def _show_help(self):
         """Show help message."""
         help_text = f"""
-{BOLD}ALPHACODE Commands:{RESET}
+{BOLD}ALPHACODE - Unified Agent with Tools{RESET}
 
-{BOLD}Conversation & Code:{RESET}
-  <any message>         Chat or describe a coding goal
-                        - Questions: I'll answer with explanations
-                        - Code tasks: I'll explore solutions via MCTS
+{BOLD}Chat & Tools:{RESET}
+  <any message>         Chat with me - I can use tools to help you
+                        - Questions: I'll search/read files to answer
+                        - Code tasks: I'll write code, then optimize with MCTS
+                        - Chitchat: I'll just chat with you
 
 {BOLD}Information:{RESET}
   /help, /h             Show this help message
@@ -268,24 +295,24 @@ class MCTSCli:
   /quit, /q             Exit ALPHACODE
 
 {BOLD}Examples:{RESET}
-  ❯ What is quick sort and how does it work?    (I'll explain)
-  ❯ Implement a binary search tree              (I'll generate code)
-  ❯ Optimize this function for performance      (I'll explore solutions)
-  ❯ Hello!                                       (I'll chat with you)
+  ❯ What files are in this project?     (I'll use glob tool)
+  ❯ Read main.py and explain it         (I'll use read tool)
+  ❯ Write a binary search tree          (I'll write code, then MCTS optimize)
+  ❯ What is quick sort?                 (I'll explain, may show code)
+  ❯ Hello!                              (Just chatting)
 
-{BOLD}Tips:{RESET}
-  • Ask programming questions - I'll explain concepts
-  • Describe code tasks - I'll use MCTS to explore solutions
-  • Be specific about constraints (performance, readability)
-  • Check /alternatives if best solution isn't ideal
+{BOLD}Available Tools:{RESET}
+  read, write, edit    - File operations
+  grep, glob           - Search operations
+  bash                 - Run shell commands
 """
         print(help_text)
 
     def _show_status(self):
         """Show exploration status."""
         if not self.controller or not self.controller.search_tree:
-            print(f"{YELLOW}No active session.{RESET}")
-            print("Start by describing your goal.")
+            print(f"{YELLOW}No active MCTS session.{RESET}")
+            print("Start a code task to begin exploration.")
             return
 
         tree = self.controller.search_tree
@@ -408,7 +435,7 @@ class MCTSCli:
         """Continue exploration."""
         if not self.controller:
             print(f"{YELLOW}No active session.{RESET}")
-            print("Start by describing your goal.")
+            print("Start a code task to begin exploration.")
             return
 
         continue_msg = (
@@ -440,8 +467,8 @@ class MCTSCli:
 
     def _clear_conversation(self):
         """Clear conversation history."""
-        if self.conversation_handler:
-            self.conversation_handler.clear_history()
+        if self.agent:
+            self.agent.clear_history()
             print(f"{GREEN}✓ Conversation history cleared.{RESET}")
         else:
             print(f"{YELLOW}No conversation history to clear.{RESET}")
@@ -498,7 +525,7 @@ def main():
     parser.add_argument(
         "--api-key", "-k",
         type=str,
-        help="LLM API key (or set OPENAI_API_KEY env var)"
+        help="LLM API key (or set NVIDIA_API_KEY/OPENAI_API_KEY env var)"
     )
 
     args = parser.parse_args()
@@ -549,7 +576,7 @@ def main():
 
     # Ensure API key is set
     if not config.llm.api_key:
-        config.llm.api_key = os.environ.get("OPENAI_API_KEY")
+        config.llm.api_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
 
     # Run CLI
     cli = MCTSCli(config)

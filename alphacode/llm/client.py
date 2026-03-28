@@ -36,6 +36,9 @@ class LLMResponse:
     entropy_decision: str = "multi"
     # Cache info
     from_cache: bool = False
+    # Tool calls (for function calling)
+    tool_calls: list[dict[str, Any]] | None = None
+    finish_reason: str = "stop"
 
 
 class LLMClient:
@@ -294,6 +297,96 @@ class LLMClient:
         async for chunk in stream:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+
+    async def generate_with_tools(
+        self,
+        prompt: str,
+        system: str = None,
+        tools: list[dict] = None,
+        temperature: float = None,
+        max_tokens: int = None,
+    ) -> LLMResponse:
+        """
+        Generate response with tool calling support.
+
+        Args:
+            prompt: User prompt
+            system: System message
+            tools: List of tool definitions (OpenAI function format)
+            temperature: Override temperature
+            max_tokens: Override max tokens
+
+        Returns:
+            LLMResponse with possible tool_calls
+        """
+        temperature = temperature or self.temperature
+        max_tokens = max_tokens or self.max_tokens
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        start_time = time.time()
+
+        try:
+            client = self._get_client()
+
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+
+            response = await client.chat.completions.create(**kwargs)
+
+            choice = response.choices[0]
+            message = choice.message
+
+            # Extract content
+            content = message.content or ""
+
+            # Extract tool calls if present
+            tool_calls = None
+            if message.tool_calls:
+                tool_calls = []
+                for tc in message.tool_calls:
+                    tool_calls.append({
+                        "id": tc.id,
+                        "tool": tc.function.name,
+                        "args": json.loads(tc.function.arguments),
+                    })
+
+            return LLMResponse(
+                content=content,
+                model=response.model or self.model,
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+                    "total_tokens": response.usage.total_tokens if response.usage else 0,
+                },
+                latency=time.time() - start_time,
+                tool_calls=tool_calls,
+                finish_reason=choice.finish_reason,
+            )
+
+        except RateLimitError as e:
+            logger.error(f"Rate limit hit: {e}")
+            raise Exception(f"Rate limit exceeded: {e}") from e
+        except APITimeoutError as e:
+            logger.error(f"API timeout after {self.timeout}s")
+            raise Exception(f"Request timed out after {self.timeout}s") from e
+        except APIError as e:
+            logger.error(f"API error: {e}")
+            raise Exception(f"API error: {e}") from e
+        except Exception as e:
+            logger.exception(f"Unexpected error: {e}")
+            raise
 
     async def generate_with_context(
         self,

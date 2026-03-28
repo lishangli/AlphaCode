@@ -1,7 +1,7 @@
 """
-Tool executor for MCTS-Agent.
+Tool executor for ALPHACODE.
 
-Executes various tool calls for code manipulation.
+Executes various tool calls for code manipulation and information retrieval.
 """
 
 import glob as globlib
@@ -10,7 +10,7 @@ import os
 import re
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,161 @@ class ToolResult:
     output: str = ""
     error: str = ""
     data: Any = None
+
+
+@dataclass
+class ToolDefinition:
+    """Tool definition for LLM function calling."""
+    name: str
+    description: str
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+# Tool definitions for LLM function calling
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read",
+            "description": "Read file contents with line numbers. Use to examine code or files.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to read"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Starting line number (0-indexed, optional)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to read (optional)"
+                    }
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write",
+            "description": "Write content to a file. Creates the file if it doesn't exist.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to write"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit",
+            "description": "Edit file by replacing old string with new string.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to edit"
+                    },
+                    "old": {
+                        "type": "string",
+                        "description": "String to find and replace"
+                    },
+                    "new": {
+                        "type": "string",
+                        "description": "New string to replace with"
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "Replace all occurrences (default: false)"
+                    }
+                },
+                "required": ["path", "old", "new"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bash",
+            "description": "Execute a shell command. Use for running tests, git operations, etc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cmd": {
+                        "type": "string",
+                        "description": "Shell command to execute"
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (default: 30)"
+                    }
+                },
+                "required": ["cmd"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": "Search for a pattern in files using regex.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: current)"
+                    },
+                    "file_pattern": {
+                        "type": "string",
+                        "description": "Glob pattern for files (default: *)"
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glob",
+            "description": "Find files matching a glob pattern.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern (e.g., '**/*.py')"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory to search (default: current)"
+                    }
+                },
+                "required": ["pattern"]
+            }
+        }
+    },
+]
 
 
 class ToolExecutor:
@@ -75,8 +230,10 @@ class ToolExecutor:
                 error=f"Unknown tool: {tool_name}"
             )
 
+        logger.debug(f"Executing tool: {tool_name} with args: {args}")
         try:
             result = self.tools[tool_name](**args)
+            logger.debug(f"Tool result: success={result.success}")
             return result
         except Exception as e:
             logger.exception(f"Tool execution failed: {tool_name}")
@@ -84,6 +241,10 @@ class ToolExecutor:
                 success=False,
                 error=str(e)
             )
+
+    def execute_multiple(self, tool_calls: list[dict[str, Any]]) -> list[ToolResult]:
+        """Execute multiple tool calls."""
+        return [self.execute(tc) for tc in tool_calls]
 
     def _resolve_path(self, path: str) -> str:
         """Resolve path relative to root."""
@@ -161,6 +322,7 @@ class ToolExecutor:
             with open(full_path, "w") as f:
                 f.write(content)
 
+            logger.info(f"Wrote {len(content)} bytes to {path}")
             return ToolResult(
                 success=True,
                 output=f"Wrote {len(content)} bytes to {path}"
