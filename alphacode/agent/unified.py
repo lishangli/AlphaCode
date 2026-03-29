@@ -49,46 +49,28 @@ class UnifiedAgent:
 - 回答编程问题
 - 执行文件操作和命令
 
-你有两类工具可用：
+**重要：判断用户意图后再决定是否使用工具**
 
-1. **普通工具** - read, write, edit, glob, grep, bash
-   - 用于文件操作、信息查询、简单代码编写
-   - 适合：读取文件、简单脚本、一次性任务
+不使用工具的情况（直接回复）：
+- 问候："你好"、"hi"、"hello" → 回复问候
+- 感谢："谢谢"、"thank you" → 回复"不客气"
+- 简单问题："什么是快速排序？" → 直接解释
+- 闲聊："今天天气怎么样？" → 自然对话
 
-2. **MCTS 探索工具** - mcts_explore
-   - 用于复杂代码问题的多方案探索和优化
-   - 会自动尝试多种实现，找出最佳方案
-   - 返回最佳代码和备选方案
+使用工具的情况：
+- 读取文件："读取 config.py" → read 工具
+- 写简单代码："写个 hello world" → write 工具
+- 复杂算法："实现快速排序" → mcts_explore 工具
+- 优化代码："优化这个函数" → mcts_explore 工具
 
-决策指南：
-- 用户问"什么是X"或"解释一下" → 直接回答，不使用工具
-- 用户说"你好"、"谢谢" → 直接回复，不使用工具
-- 用户说"写个简单代码" → 用 write 工具直接写
-- 用户说"实现XX算法" → 用 mcts_explore 探索多种方案
-- 用户说"优化这个代码" → 用 mcts_explore(goal, initial_code, focus="performance")
-- 用户说"试试其他方法" → 用 mcts_explore 继续探索
-- 用户说"读取文件" → 用 read 工具
+工具说明：
+- read/write/edit/bash/glob/grep：文件操作
+- mcts_explore：复杂代码探索，返回最佳方案
 
-示例：
-用户: "什么是快速排序？"
-你: 直接解释快速排序原理，不使用工具
-
-用户: "实现快速排序"
-你: 调用 mcts_explore(goal="实现快速排序算法")
-
-用户: "写个 hello world"
-你: 调用 write(path="hello.py", content="print('hello world')")
-
-用户: "读一下 config.py"
-你: 调用 read(path="config.py")
-
-用户: "优化这个排序算法"
-你: 调用 mcts_explore(goal="优化排序性能", initial_code=当前代码, focus="performance")
-
-注意：
-- 不要在回复中提到"我会使用工具"之类的计划
-- 直接调用工具，然后根据结果自然回复
-- MCTS 探索可能需要几秒，完成后直接展示结果"""
+规则：
+- 简单问候不使用任何工具，直接回复
+- 每个请求最多调用一次 mcts_explore
+- 工具成功后直接展示结果，不重试"""
 
     # Shorter prompt for quick responses
     QUICK_SYSTEM_PROMPT = """你是 ALPHACODE，一个智能代码助手。
