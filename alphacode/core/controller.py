@@ -4,7 +4,6 @@ MCTS Controller for MCTS-Agent.
 Main controller that orchestrates the MCTS search process.
 """
 
-import asyncio
 import logging
 import math
 import os
@@ -380,22 +379,18 @@ Consider:
 Respond with just a number (e.g., "0.9" or "0.3")."""
 
             try:
-                assess_response = asyncio.run(
-                    self.llm_client.generate(
-                        prompt=assess_prompt,
-                        temperature=0.1,
-                        max_tokens=10,
-                    )
+                assess_response = self.llm_client.generate_sync(
+                    prompt=assess_prompt,
+                    temperature=0.1,
+                    max_tokens=10,
                 )
 
-                # Parse confidence
+                # Parse confidence (simple parsing since generate_sync returns string)
                 import re
-                match = re.search(r'(\d+\.?\d*)', assess_response.content)
+                match = re.search(r'(\d+\.?\d*)', assess_response)
                 if match:
                     self_confidence = float(match.group(1))
-
-                    # Use entropy as additional signal
-                    entropy = assess_response.entropy
+                    entropy = 0.5  # Default entropy for sync call
 
                     logger.info(
                         f"Self-assessment: "
@@ -430,12 +425,10 @@ Respond with just a number (e.g., "0.9" or "0.3")."""
         )
 
         try:
-            response = asyncio.run(
-                self.llm_client.generate_json(
-                    prompt=prompt["user"],
-                    system=prompt["system"],
-                    temperature=0.7,
-                )
+            response = self.llm_client.generate_json_sync(
+                prompt=prompt["user"],
+                system=prompt["system"],
+                temperature=0.7,
             )
 
             actions = []
@@ -768,17 +761,15 @@ Code:
 
 Score:"""
 
-            response = asyncio.run(
-                self.llm_client.generate(
-                    prompt=prompt,
-                    temperature=0.1,
-                    max_tokens=10,
-                )
+            response = self.llm_client.generate_sync(
+                prompt=prompt,
+                temperature=0.1,
+                max_tokens=10,
             )
 
-            # Extract number from response
+            # Extract number from response (generate_sync returns string)
             import re
-            match = re.search(r'(\d+\.?\d*)', response.content)
+            match = re.search(r'(\d+\.?\d*)', response)
             if match:
                 return float(match.group(1))
             return 0.5
@@ -988,12 +979,10 @@ Provide a JSON review:
   "suggestions": ["suggestion1"]
 }}"""
 
-            response = asyncio.run(
-                self.llm_client.generate_json(
-                    prompt=prompt,
-                    system="You are a code reviewer. Provide constructive feedback.",
-                    temperature=0.3,
-                )
+            response = self.llm_client.generate_json_sync(
+                prompt=prompt,
+                system="You are a code reviewer. Provide constructive feedback.",
+                temperature=0.3,
             )
 
             return response

@@ -26,6 +26,7 @@ dependencies = [
     "httpx>=0.28.1",
     "diskcache>=5.6.0",  # 请求缓存
     "python-dotenv>=1.0.0",  # 自动加载 .env 文件
+    "nest_asyncio>=1.5.0",  # 允许嵌套 asyncio 调用
 ]
 
 [project.scripts]

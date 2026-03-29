@@ -17,7 +17,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+import nest_asyncio
 from openai import APIError, APITimeoutError, AsyncOpenAI, RateLimitError
+
+# Enable nested asyncio for running sync methods in async context
+nest_asyncio.apply()
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +436,7 @@ class LLMClient:
         max_tokens: int = None,
     ) -> str:
         """Synchronous generate for convenience."""
+        # nest_asyncio allows run_until_complete in running loop
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -513,6 +518,51 @@ class LLMClient:
             result["_decision"] = response.entropy_decision
 
         return result
+
+    def generate_json_sync(
+        self,
+        prompt: str,
+        system: str = None,
+        temperature: float = 0.3,
+        logprobs: bool = False,
+    ) -> dict[str, Any]:
+        """Synchronous JSON generation for convenience."""
+        # nest_asyncio allows run_until_complete in running loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(
+            self.generate_json(
+                prompt=prompt,
+                system=system,
+                temperature=temperature,
+                logprobs=logprobs,
+            )
+        )
+
+    def generate_with_entropy_sync(
+        self,
+        prompt: str,
+        system: str = None,
+        temperature: float = None,
+    ) -> LLMResponse:
+        """Synchronous entropy generation."""
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        return loop.run_until_complete(
+            self.generate_with_entropy(
+                prompt=prompt,
+                system=system,
+                temperature=temperature,
+            )
+        )
 
     async def generate_with_entropy(
         self,

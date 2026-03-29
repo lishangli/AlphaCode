@@ -198,11 +198,13 @@ class MCTSExploreTool:
                     best_code = solution.best_node.code or ""
                     best_score = solution.best_node.value_avg
 
-                    # Collect alternatives (top 3 other nodes)
+                    # Collect alternatives from search tree
                     alternatives = []
-                    if solution.all_nodes:
+                    if solution.search_tree and solution.search_tree.nodes:
+                        # Get all nodes except the best one
+                        all_nodes = list(solution.search_tree.nodes.values())
                         sorted_nodes = sorted(
-                            solution.all_nodes,
+                            all_nodes,
                             key=lambda n: n.value_avg,
                             reverse=True
                         )
@@ -219,11 +221,12 @@ class MCTSExploreTool:
                                 })
 
                     # Build message
+                    nodes_count = solution.search_tree.size() if solution.search_tree else 1
                     message = self._build_message(
                         goal=goal,
                         best_score=best_score,
                         iterations=solution.iterations,
-                        nodes=len(solution.all_nodes) if solution.all_nodes else 1,
+                        nodes=nodes_count,
                         test_passed=solution.test_passed,
                         has_alternatives=len(alternatives) > 0,
                     )
@@ -234,7 +237,7 @@ class MCTSExploreTool:
                         best_score=best_score,
                         alternatives=alternatives,
                         iterations=solution.iterations,
-                        nodes_explored=len(solution.all_nodes) if solution.all_nodes else 1,
+                        nodes_explored=nodes_count,
                         test_passed=solution.test_passed,
                         message=message,
                     )
@@ -317,7 +320,7 @@ class MCTSExploreTool:
 
     def get_alternatives(self) -> list[dict]:
         """Get alternative solutions from last exploration."""
-        if not self.last_solution or not self.last_solution.all_nodes:
+        if not self.last_solution or not self.last_solution.search_tree:
             return []
 
         best_code = (
@@ -327,8 +330,9 @@ class MCTSExploreTool:
         )
 
         alternatives = []
+        all_nodes = list(self.last_solution.search_tree.nodes.values())
         sorted_nodes = sorted(
-            self.last_solution.all_nodes,
+            all_nodes,
             key=lambda n: n.value_avg,
             reverse=True
         )
