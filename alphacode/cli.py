@@ -2,17 +2,17 @@
 CLI for ALPHACODE.
 
 Interactive command-line interface for code exploration.
+LLM autonomously decides when to use MCTS exploration.
 """
 
 import logging
 import os
 
-from alphacode.agent import AgentResponse, CodeAgent, ConversationAgent
+from alphacode.agent.unified import UnifiedAgent, UnifiedResponse
 from alphacode.config import MCTSConfig
 from alphacode.core.controller import MCTSController, Solution
 from alphacode.llm.client import LLMClient
-from alphacode.llm.intent import IntentDetector, IntentType
-from alphacode.state.session_manager import SessionManager, SessionState
+from alphacode.state.session_manager import SessionManager
 from alphacode.tools.executor import ToolExecutor
 from alphacode.utils.display import (
     BLUE,
@@ -39,9 +39,8 @@ class MCTSCli:
     """
     ALPHACODE CLI.
 
-    Interactive interface for code exploration.
-    All intents can use tools (controlled by LLM).
-    Only CODE_TASK goes through MCTS exploration for optimization.
+    Unified conversation interface.
+    LLM autonomously decides when to use MCTS exploration.
     """
 
     def __init__(self, config: MCTSConfig = None):
@@ -49,18 +48,13 @@ class MCTSCli:
         self.controller: MCTSController | None = None
         self.current_solution: Solution | None = None
 
-        # LLM and tools
+        # Components
         self.llm_client: LLMClient | None = None
         self.tool_executor: ToolExecutor | None = None
-        self.intent_detector: IntentDetector | None = None
-
-        # Session management
         self.session_manager: SessionManager | None = None
-        self.current_session: SessionState | None = None
 
-        # Agents
-        self.conversation_agent: ConversationAgent | None = None
-        self.code_agent: CodeAgent | None = None
+        # Unified agent
+        self.agent: UnifiedAgent | None = None
 
     def _init_components(self):
         """Initialize all components."""
@@ -83,27 +77,21 @@ class MCTSCli:
             cache_ttl=self.config.llm.cache_ttl,
         )
 
-        # Initialize tools
-        self.tool_executor = ToolExecutor(root_path=os.getcwd())
+        # Initialize tools with config
+        self.tool_executor = ToolExecutor(
+            root_path=os.getcwd(),
+            config=self.config,
+        )
 
         # Initialize session manager
         self.session_manager = SessionManager(root_path=os.getcwd())
 
-        # Initialize agents
-        self.conversation_agent = ConversationAgent(
+        # Initialize unified agent
+        self.agent = UnifiedAgent(
             llm_client=self.llm_client,
             tool_executor=self.tool_executor,
             session_manager=self.session_manager,
         )
-
-        self.code_agent = CodeAgent(
-            llm_client=self.llm_client,
-            tool_executor=self.tool_executor,
-            session_manager=self.session_manager,
-        )
-
-        # Initialize intent detector
-        self.intent_detector = IntentDetector(self.llm_client)
 
     def _init_agent(self):
         """Initialize agent (backward compatibility)."""
@@ -175,133 +163,72 @@ class MCTSCli:
         """
         Process user input with unified agent.
 
-        All intents can use tools (LLM decides).
-        Only CODE_TASK goes to MCTS exploration after initial generation.
+        LLM autonomously decides when to use MCTS exploration.
+        No hardcoded intent detection.
         """
         # Initialize components if needed
         self._init_components()
 
-        # Check if agents are available
-        if not self.conversation_agent:
+        # Check if agent is available
+        if not self.agent:
             print(f"{RED}Error: No LLM client available.{RESET}")
             print("Set NVIDIA_API_KEY or OPENAI_API_KEY environment variable.")
             return
 
-        # Detect intent
-        print(f"\n{DIM}Analyzing your request...{RESET}")
+        # Process with unified agent
+        print()  # Blank line for readability
+        response = self.agent.process_sync(user_input)
 
-        if self.intent_detector:
-            intent_result = self.intent_detector.detect_sync(user_input)
-        else:
-            from alphacode.llm.intent import IntentResult
-            intent_result = IntentResult(
-                intent=IntentType.CODE_TASK,
-                confidence=0.5,
-                reason="No LLM for intent detection",
-                code_hint=user_input,
-            )
+        # Show response
+        self._show_response(response)
 
-        intent_msg = (
-            f"{DIM}Intent: {intent_result.intent.value} "
-            f"(confidence: {intent_result.confidence:.2f}){RESET}"
-        )
-        print(intent_msg)
+    def _show_response(self, response: UnifiedResponse):
+        """Display unified agent response."""
+        # Show MCTS results specially if used
+        if response.mcts_used and response.mcts_result:
+            self._show_mcts_result(response.mcts_result)
 
-        # For CODE_TASK, we use MCTS for exploration
-        # For other intents, use conversation agent with tools
-        if intent_result.intent == IntentType.CODE_TASK:
-            # Let code agent do initial generation
-            print(f"\n{DIM}Generating initial solution...{RESET}")
-            agent_response = self.code_agent.process_sync(user_input)
-
-            # Show what agent did
-            self._show_agent_response(agent_response)
-
-            # Now run MCTS exploration for optimization
-            goal = intent_result.code_hint or user_input
-            self._run_mcts_exploration(goal)
-
-        else:
-            # For questions/chitchat - use conversation agent
-            print(f"\n{DIM}Processing with tools...{RESET}")
-            agent_response = self.conversation_agent.process_sync(user_input)
-
-            # Show response
-            self._show_agent_response(agent_response)
-
-    def _show_agent_response(self, response: AgentResponse):
-        """Display agent response including tool usage."""
-        # Show tool results directly (since LLM may not format them well)
-        if response.tool_results:
-            print(f"\n{DIM}Tool results:{RESET}")
-            for tr in response.tool_results:
+        # Show other tool results
+        for tr in response.tool_results:
+            if tr["tool"] != "mcts_explore":
                 if tr.get("success"):
-                    # Show the actual tool output
-                    print(tr["result"])
+                    # Show meaningful tool outputs
+                    result = tr["result"]
+                    if len(result) > 200:
+                        print(f"{DIM}{result[:200]}...{RESET}")
+                    else:
+                        print(result)
                 else:
                     print(f"{RED}Error: {tr.get('result')}{RESET}")
 
-        # Show LLM content if any
-        if response.content and not response.tool_results:
-            print(f"\n{CYAN}{response.content}{RESET}\n")
-        elif response.content:
-            # LLM summary after tool results
-            print(f"\n{DIM}{response.content}{RESET}\n")
+        # Show agent content
+        if response.content:
+            # If MCTS was used, content might be summary
+            if response.mcts_used:
+                print(f"\n{DIM}{response.content}{RESET}")
+            else:
+                print(f"\n{CYAN}{response.content}{RESET}\n")
 
-    def _run_mcts_exploration(self, goal: str):
-        """Run MCTS exploration for code optimization."""
+    def _show_mcts_result(self, result):
+        """Display MCTS exploration result."""
         print(f"\n{Display.separator()}")
-        print(f"{CYAN}MCTS Exploration:{RESET} {goal}")
-        print(f"{Display.separator()}\n")
-
-        # Check for existing code
-        initial_code = ""
-        program_file = "program.py"
-
-        if os.path.exists(program_file):
-            print(f"{DIM}Found existing {program_file}, using as starting point{RESET}")
-            with open(program_file) as f:
-                initial_code = f.read()
-
-        # Create controller and run MCTS
-        self.controller = MCTSController(self.config)
-
-        start_msg = f"{DIM}Starting exploration "
-        start_msg += f"(max {self.config.max_iterations} iterations)...{RESET}\n"
-        print(start_msg)
-
-        solution = self.controller.solve(goal, initial_code)
-        self.current_solution = solution
-
-        # Display result
-        print(f"\n{Display.separator()}")
-
-        if solution.test_passed:
-            print(Display.header(f"Solution Found & Tested (score: {solution.best_score:.3f})"))
+        if result.test_passed:
+            print(Display.header(f"✓ MCTS Exploration Complete (score: {result.best_score:.2f})"))
         else:
-            print(Display.header(f"Solution Found (score: {solution.best_score:.3f})"))
-
+            print(Display.header(f"MCTS Exploration (score: {result.best_score:.2f})"))
         print(f"{Display.separator()}\n")
 
-        print(f"{BOLD}Iterations:{RESET} {solution.iterations}")
-        print(f"{BOLD}Nodes explored:{RESET} {solution.total_nodes}")
-        test_status = GREEN if solution.test_passed else RED
-        print(f"{BOLD}Test passed:{RESET} {test_status}{solution.test_passed}{RESET}")
+        print(f"{BOLD}探索了 {result.nodes_explored} 个节点，{result.iterations} 次迭代{RESET}")
 
-        print(f"\n{BOLD}Code:{RESET}")
-        print(Display.code(solution.best_code))
+        if result.test_passed:
+            print(f"{GREEN}✓ 测试通过{RESET}")
 
-        if not solution.test_passed and solution.test_output:
-            print(f"\n{YELLOW}Test output:{RESET}")
-            print(f"{DIM}{solution.test_output[:300]}{RESET}")
+        print(f"\n{BOLD}最佳代码:{RESET}")
+        print(Display.code(result.best_code))
 
-        # Suggest next steps
-        alternatives = solution.get_alternative_solutions(3)
-        if alternatives:
-            print(f"\n{YELLOW}{len(alternatives)} alternative solutions available.{RESET}")
-            print(f"Type {BOLD}/alternatives{RESET} to view them.")
-
-        print(f"\nType {BOLD}/adopt{RESET} to merge best solution to main branch.")
+        if result.alternatives:
+            print(f"\n{YELLOW}{len(result.alternatives)} 个备选方案{RESET}")
+            print(f"输入 {BOLD}/alternatives{RESET} 查看")
 
     def _show_help(self):
         """Show help message."""
@@ -502,8 +429,8 @@ class MCTSCli:
 
     def _clear_conversation(self):
         """Clear conversation history."""
-        if self.conversation_agent:
-            self.conversation_agent.clear_history()
+        if self.agent:
+            self.agent.clear_history()
             print(f"{GREEN}✓ Conversation history cleared.{RESET}")
         else:
             print(f"{YELLOW}No conversation history to clear.{RESET}")

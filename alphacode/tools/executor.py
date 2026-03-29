@@ -33,8 +33,8 @@ class ToolDefinition:
     parameters: dict[str, Any] = field(default_factory=dict)
 
 
-# Tool definitions for LLM function calling
-TOOL_DEFINITIONS = [
+# Base tool definitions for LLM function calling (without MCTS)
+TOOL_DEFINITIONS_BASE = [
     {
         "type": "function",
         "function": {
@@ -180,6 +180,30 @@ TOOL_DEFINITIONS = [
 ]
 
 
+def get_tool_definitions(include_mcts: bool = True) -> list[dict]:
+    """
+    Get tool definitions for LLM function calling.
+
+    Args:
+        include_mcts: Whether to include MCTS exploration tool
+
+    Returns:
+        List of tool definitions
+    """
+    tools = TOOL_DEFINITIONS_BASE.copy()
+
+    if include_mcts:
+        # Import MCTS tool definition lazily to avoid circular imports
+        from alphacode.tools.mcts_tool import get_mcts_tool_definition
+        tools.append(get_mcts_tool_definition())
+
+    return tools
+
+
+# Default tool definitions (used by most code)
+TOOL_DEFINITIONS = get_tool_definitions()
+
+
 class ToolExecutor:
     """
     Tool executor.
@@ -188,18 +212,24 @@ class ToolExecutor:
     - File operations: read, write, edit
     - Search operations: glob, grep
     - Execution: bash
+    - MCTS exploration: mcts_explore
     """
 
-    def __init__(self, root_path: str = None, timeout: int = 30):
+    def __init__(self, root_path: str = None, timeout: int = 30, config=None):
         """
         Initialize tool executor.
 
         Args:
             root_path: Root directory for file operations
             timeout: Default timeout for bash commands
+            config: MCTSConfig for MCTS tool
         """
         self.root_path = root_path or os.getcwd()
         self.timeout = timeout
+        self.config = config
+
+        # MCTS tool (initialized lazily)
+        self._mcts_tool = None
 
         # Tool registry
         self.tools: dict[str, Callable] = {
@@ -209,7 +239,12 @@ class ToolExecutor:
             "bash": self._bash,
             "grep": self._grep,
             "glob": self._glob,
+            "mcts_explore": self._mcts_explore,
         }
+
+    def set_config(self, config):
+        """Set MCTS config for MCTS tool."""
+        self.config = config
 
     def execute(self, tool_call: dict[str, Any]) -> ToolResult:
         """
@@ -567,6 +602,87 @@ class ToolExecutor:
         """List available tools."""
         return list(self.tools.keys())
 
+    def _mcts_explore(
+        self,
+        goal: str,
+        initial_code: str = None,
+        iterations: int = 10,
+        focus: str = "balanced",
+        test_cases: str = None,
+    ) -> ToolResult:
+        """
+        Run MCTS exploration for code optimization.
+
+        Args:
+            goal: Code goal description
+            initial_code: Optional starting code
+            iterations: Number of iterations (default 10)
+            focus: Optimization focus (performance/readability/correctness/balanced)
+            test_cases: Optional test cases
+
+        Returns:
+            ToolResult with exploration results
+        """
+        # Import MCTS tool lazily to avoid circular imports
+        from alphacode.tools.mcts_tool import MCTSExploreTool
+
+        # Initialize MCTS tool if needed
+        if not self._mcts_tool:
+            from alphacode.config import MCTSConfig
+            self._mcts_tool = MCTSExploreTool(
+                config=self.config or MCTSConfig(),
+                working_dir=self.root_path,
+            )
+
+        # Convert string parameters
+        if isinstance(iterations, str):
+            iterations = int(iterations)
+
+        logger.info(f"MCTS explore: goal='{goal}', iterations={iterations}")
+
+        result = self._mcts_tool.execute(
+            goal=goal,
+            initial_code=initial_code,
+            iterations=iterations,
+            focus=focus,
+            test_cases=test_cases,
+        )
+
+        if result.success:
+            # Format output for display
+            output_lines = [
+                result.message,
+                "",
+                "最佳代码:",
+                "```python",
+                result.best_code,
+                "```",
+            ]
+
+            if result.alternatives:
+                output_lines.append("")
+                output_lines.append(f"备选方案: {len(result.alternatives)} 个")
+
+            return ToolResult(
+                success=True,
+                output="\n".join(output_lines),
+                data={
+                    "best_code": result.best_code,
+                    "best_score": result.best_score,
+                    "alternatives": result.alternatives,
+                    "iterations": result.iterations,
+                    "nodes_explored": result.nodes_explored,
+                    "test_passed": result.test_passed,
+                    "mcts_result": result,
+                }
+            )
+        else:
+            return ToolResult(
+                success=False,
+                output=result.message,
+                error=result.error,
+            )
+
     def get_tool_description(self, name: str) -> str:
         """Get description of a tool."""
         descriptions = {
@@ -576,5 +692,7 @@ class ToolExecutor:
             "bash": "Run shell command (cmd, timeout?)",
             "grep": "Search files for pattern (pattern, path?, file_pattern?)",
             "glob": "Find files matching pattern (pattern, path?)",
+            "mcts_explore": "Explore code solutions via MCTS "
+            "(goal, initial_code?, iterations?, focus?)",
         }
         return descriptions.get(name, "No description available")
