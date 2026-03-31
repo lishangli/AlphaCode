@@ -5,8 +5,10 @@ Interactive command-line interface for code exploration.
 LLM autonomously decides when to use MCTS exploration.
 """
 
+import asyncio
 import logging
 import os
+import sys
 
 from alphacode.agent.unified import UnifiedAgent, UnifiedResponse
 from alphacode.config import MCTSConfig
@@ -24,14 +26,26 @@ from alphacode.utils.display import (
     RESET,
     YELLOW,
     Display,
+    SYMBOLS,
+    format_git_status,
     print_banner,
+    print_welcome,
 )
 
-# Configure logging
+# Configure logging - only show warnings and errors by default
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.WARNING,
+    format="%(levelname)s: %(message)s"
 )
+
+# Set specific module log levels
+logging.getLogger("alphacode.llm.client").setLevel(logging.WARNING)
+logging.getLogger("alphacode.core.controller").setLevel(logging.INFO)
+logging.getLogger("alphacode.state.git_manager").setLevel(logging.WARNING)
+logging.getLogger("alphacode.state.session_manager").setLevel(logging.WARNING)
+logging.getLogger("alphacode.tools.executor").setLevel(logging.WARNING)
+logging.getLogger("alphacode.agent.unified").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,7 +53,7 @@ class MCTSCli:
     """
     ALPHACODE CLI.
 
-    Unified conversation interface.
+    Unified conversation interface with streaming output.
     LLM autonomously decides when to use MCTS exploration.
     """
 
@@ -100,16 +114,16 @@ class MCTSCli:
     def run(self):
         """Run the CLI."""
         print_banner()
+        print_welcome()
 
-        print(f"{BOLD}Working Directory:{RESET} {os.getcwd()}")
-        print(f"{BOLD}Model:{RESET} {self.config.llm.model}")
-        print()
-        print(f"Type {BOLD}help{RESET} for commands, or start chatting with me.")
+        # Show current status
+        print(f"{SYMBOLS['folder']} {Display.muted(os.getcwd())}")
+        print(f"{SYMBOLS['gear']} {Display.inline_code(self.config.llm.model)}")
         print()
 
         while True:
             try:
-                user_input = input(f"{BOLD}{BLUE}❯{RESET} ").strip()
+                user_input = input(f"{BOLD}{BLUE}{SYMBOLS['prompt']}{RESET} ").strip()
 
                 if not user_input:
                     continue
@@ -118,8 +132,8 @@ class MCTSCli:
                 if user_input.startswith("/"):
                     self._handle_command(user_input)
                 else:
-                    # Process user input with unified agent
-                    self._process_input(user_input)
+                    # Process user input with streaming
+                    self._process_input_streaming(user_input)
 
             except (KeyboardInterrupt, EOFError):
                 print(f"\n{GREEN}Goodbye!{RESET}")
@@ -128,6 +142,62 @@ class MCTSCli:
                 print(f"{RED}Error: {e}{RESET}")
                 import traceback
                 traceback.print_exc()
+
+    def _process_input_streaming(self, user_input: str):
+        """
+        Process user input with streaming output.
+
+        Real-time token display for better UX.
+        """
+        # Initialize components if needed
+        self._init_components()
+
+        # Check if agent is available
+        if not self.agent:
+            print(f"{RED}Error: No LLM client available.{RESET}")
+            print("Set NVIDIA_API_KEY or OPENAI_API_KEY environment variable.")
+            return
+
+        print()  # Blank line
+
+        async def stream_process():
+            tool_calls_info = []
+            full_content = ""
+
+            def on_token(token):
+                # Print token immediately
+                print(token, end="", flush=True)
+
+            def on_tool_call(tc):
+                tool_calls_info.append(tc)
+                # Only show tool name, not args (args might be long JSON)
+                print(f"{DIM}🔧 {tc['tool']}...{RESET}", flush=True)
+
+            def on_tool_result(result):
+                # Show tool execution result clearly
+                print()  # newline before result
+                print(f"{CYAN}{result}{RESET}")
+                print()  # newline after result
+
+            def on_mcts_progress(progress):
+                # Show MCTS progress briefly
+                if progress.get('improved'):
+                    print(f"{GREEN}↑ score: {progress['score']:.2f}{RESET}", flush=True)
+
+            # Stream the response
+            async for token in self.agent.process_stream(
+                user_input,
+                on_token=on_token,
+                on_tool_call=on_tool_call,
+                on_tool_result=on_tool_result,
+                on_mcts_progress=on_mcts_progress,
+            ):
+                full_content += token
+
+            # Final newline
+            print()
+
+        asyncio.run(stream_process())
 
     def _handle_command(self, cmd: str):
         """Handle slash commands."""
@@ -141,107 +211,30 @@ class MCTSCli:
             self._show_tree()
         elif cmd_lower in ["/best", "/b"]:
             self._show_best()
-        elif cmd_lower in ["/alternatives", "/alt", "/a"]:
+        elif cmd_lower in ["/alternatives", "/alt"]:
             self._show_alternatives()
-        elif cmd_lower in ["/adopt"]:
-            self._adopt_best()
-        elif cmd_lower in ["/continue", "/c"]:
-            self._continue_exploration()
         elif cmd_lower in ["/report", "/r"]:
             self._show_report()
-        elif cmd_lower in ["/clear"]:
-            self._clear_conversation()
-        elif cmd_lower in ["/config"]:
+        elif cmd_lower == "/config":
             self._show_config()
-        elif cmd_lower in ["/quit", "/q", "/exit"]:
-            raise EOFError
+        elif cmd_lower == "/adopt":
+            self._adopt_solution()
+        elif cmd_lower in ["/continue", "/c"]:
+            self._continue_exploration()
+        elif cmd_lower == "/clear":
+            self._clear_history()
+        elif cmd_lower in ["/quit", "/q"]:
+            raise KeyboardInterrupt()
         else:
             print(f"{YELLOW}Unknown command: {cmd}{RESET}")
             print(f"Type {BOLD}/help{RESET} for available commands.")
-
-    def _process_input(self, user_input: str):
-        """
-        Process user input with unified agent.
-
-        LLM autonomously decides when to use MCTS exploration.
-        No hardcoded intent detection.
-        """
-        # Initialize components if needed
-        self._init_components()
-
-        # Check if agent is available
-        if not self.agent:
-            print(f"{RED}Error: No LLM client available.{RESET}")
-            print("Set NVIDIA_API_KEY or OPENAI_API_KEY environment variable.")
-            return
-
-        # Process with unified agent
-        print()  # Blank line for readability
-        response = self.agent.process_sync(user_input)
-
-        # Show response
-        self._show_response(response)
-
-    def _show_response(self, response: UnifiedResponse):
-        """Display unified agent response."""
-        # Show MCTS results specially if used
-        if response.mcts_used and response.mcts_result:
-            self._show_mcts_result(response.mcts_result)
-
-        # Show other tool results
-        for tr in response.tool_results:
-            if tr["tool"] != "mcts_explore":
-                if tr.get("success"):
-                    # Show meaningful tool outputs
-                    result = tr["result"]
-                    if len(result) > 200:
-                        print(f"{DIM}{result[:200]}...{RESET}")
-                    else:
-                        print(result)
-                else:
-                    print(f"{RED}Error: {tr.get('result')}{RESET}")
-
-        # Show agent content
-        if response.content:
-            # If MCTS was used, content might be summary
-            if response.mcts_used:
-                print(f"\n{DIM}{response.content}{RESET}")
-            else:
-                print(f"\n{CYAN}{response.content}{RESET}\n")
-
-    def _show_mcts_result(self, result):
-        """Display MCTS exploration result."""
-        print(f"\n{Display.separator()}")
-        if result.test_passed:
-            print(Display.header(f"✓ MCTS Exploration Complete (score: {result.best_score:.2f})"))
-        else:
-            print(Display.header(f"MCTS Exploration (score: {result.best_score:.2f})"))
-        print(f"{Display.separator()}\n")
-
-        print(f"{BOLD}探索了 {result.nodes_explored} 个节点，{result.iterations} 次迭代{RESET}")
-
-        if result.test_passed:
-            print(f"{GREEN}✓ 测试通过{RESET}")
-
-        print(f"\n{BOLD}最佳代码:{RESET}")
-        print(Display.code(result.best_code))
-
-        if result.alternatives:
-            print(f"\n{YELLOW}{len(result.alternatives)} 个备选方案{RESET}")
-            print(f"输入 {BOLD}/alternatives{RESET} 查看")
 
     def _show_help(self):
         """Show help message."""
         help_text = f"""
 {BOLD}ALPHACODE - Unified Agent with Tools{RESET}
 
-{BOLD}Chat & Tools:{RESET}
-  <any message>         Chat with me - I can use tools to help you
-                        - Questions: I'll search/read files to answer
-                        - Code tasks: I'll write code, then optimize with MCTS
-                        - Chitchat: I'll just chat with you
-
-{BOLD}Information:{RESET}
+{BOLD}Commands:{RESET}
   /help, /h             Show this help message
   /status, /s           Show current exploration status
   /tree, /t             Show search tree visualization
@@ -249,24 +242,19 @@ class MCTSCli:
   /alternatives, /alt   Show alternative solutions
   /report, /r           Generate full exploration report
   /config               Show current configuration
-
-{BOLD}Actions:{RESET}
   /adopt                Adopt best solution (merge to main)
   /continue, /c         Continue exploration
   /clear                Clear conversation history
   /quit, /q             Exit ALPHACODE
 
-{BOLD}Examples:{RESET}
-  ❯ What files are in this project?     (I'll use glob tool)
-  ❯ Read main.py and explain it         (I'll use read tool)
-  ❯ Write a binary search tree          (I'll write code, then MCTS optimize)
-  ❯ What is quick sort?                 (I'll explain, may show code)
-  ❯ Hello!                              (Just chatting)
-
-{BOLD}Available Tools:{RESET}
+{BOLD}Tools:{RESET}
   read, write, edit    - File operations
   grep, glob           - Search operations
-  bash                 - Run shell commands
+  bash                 - Shell commands
+  mcts_explore         - Code exploration
+
+{BOLD}Usage:{RESET}
+  Just type your message. The agent will decide how to help you.
 """
         print(help_text)
 
@@ -335,19 +323,12 @@ class MCTSCli:
             print(f"{YELLOW}No best solution available.{RESET}")
             return
 
-        print(f"\n{BOLD}Best Solution (score: {best.value_avg:.3f}){RESET}")
-        print(f"{DIM}Commit: {best.commit_hash}{RESET}")
-        print(f"{DIM}Depth: {best.depth}, Visits: {best.visits}{RESET}")
+        print(f"\n{BOLD}Best Solution:{RESET}")
+        print(f"{BOLD}Score:{RESET} {best.value:.3f}")
+        print(f"{BOLD}Path:{RESET} {best.git_branch or 'default'}")
         print()
 
-        # Metrics
-        if best.evaluation:
-            print(f"{BOLD}Metrics:{RESET}")
-            for name, value in best.evaluation.metrics.items():
-                print(f"  {name}: {value:.3f}")
-            print()
-
-        # Code
+        # Show code
         print(f"{BOLD}Code:{RESET}")
         print(Display.code(best.code))
 
@@ -357,190 +338,79 @@ class MCTSCli:
             print(f"{YELLOW}No solutions found yet.{RESET}")
             return
 
-        alternatives = self.current_solution.get_alternative_solutions(5)
+        alternatives = self.current_solution.alternatives
 
         if not alternatives:
-            print(f"{YELLOW}No alternative solutions available.{RESET}")
+            print(f"{YELLOW}No alternatives available.{RESET}")
             return
 
-        print(f"\n{BOLD}Alternative Solutions:{RESET}\n")
+        print(f"\n{BOLD}Alternative Solutions:{RESET}")
 
-        for i, alt in enumerate(alternatives):
-            print(f"{BOLD}Alternative {i+1}{RESET} (score: {alt.value_avg:.3f})")
-
-            if alt.feature_coords:
-                print(f"{DIM}Features: {alt.feature_coords.to_key()}{RESET}")
-
-            if alt.action:
-                print(f"{DIM}Action: {alt.action.description}{RESET}")
-
-            print(Display.code(alt.code[:300] + "..."))
+        for i, alt in enumerate(alternatives, 1):
+            print(f"\n{BOLD}Alternative {i}:{RESET}")
+            print(f"  Score: {alt['score']:.3f}")
+            print(f"  Branch: {alt['branch']}")
             print()
+            print(Display.code(alt['code'], max_lines=20))
 
-    def _adopt_best(self):
-        """Adopt the best solution."""
-        if not self.current_solution or not self.current_solution.best_node:
+    def _show_report(self):
+        """Show full exploration report."""
+        if not self.controller:
+            print(f"{YELLOW}No active session.{RESET}")
+            return
+
+        report = self.controller.generate_report()
+
+        print(f"\n{BOLD}Exploration Report:{RESET}")
+        print(report)
+
+    def _show_config(self):
+        """Show current configuration."""
+        print(f"\n{BOLD}Configuration:{RESET}")
+        print(f"  Model: {self.config.llm.model}")
+        print(f"  Temperature: {self.config.llm.temperature}")
+        print(f"  Max tokens: {self.config.llm.max_tokens}")
+        print(f"  Max iterations: {self.config.max_iterations}")
+        print(f"  Exploration weight: {self.config.exploration_weight}")
+        print(f"  Cache enabled: {self.config.llm.enable_cache}")
+
+    def _adopt_solution(self):
+        """Adopt best solution."""
+        if not self.current_solution:
             print(f"{YELLOW}No solution to adopt.{RESET}")
             return
 
-        try:
-            self.controller.git_manager.checkout_main()
-            self.controller.git_manager.merge_to_main(
-                self.current_solution.best_node.commit_hash,
-                f"MCTS: adopted best solution ({self.current_solution.best_score:.3f})"
-            )
-            print(f"{GREEN}✓ Best solution merged to main branch!{RESET}")
-        except Exception as e:
-            print(f"{RED}Failed to merge: {e}{RESET}")
+        best = self.current_solution.best_node
+
+        if not best:
+            print(f"{YELLOW}No best solution available.{RESET}")
+            return
+
+        # Merge to main
+        self.controller.git_manager.adopt_solution(best.git_branch)
+
+        print(f"{GREEN}✓ Adopted solution from branch: {best.git_branch}{RESET}")
+        print(f"  Score: {best.value:.3f}")
 
     def _continue_exploration(self):
         """Continue exploration."""
         if not self.controller:
             print(f"{YELLOW}No active session.{RESET}")
-            print("Start a code task to begin exploration.")
             return
 
-        continue_msg = (
-            f"{DIM}Continuing exploration for "
-            f"{self.config.max_iterations} more iterations...{RESET}"
-        )
-        print(continue_msg)
+        print(f"{CYAN}Continuing exploration...{RESET}")
+        self.controller.run_iteration()
 
-        # Reset iteration counter
-        self.controller.iteration = 0
-        self.controller.running = True
-
-        # Continue
-        solution = self.controller.solve(
-            self.controller.search_tree.goal,
-            initial_code=self.current_solution.best_code if self.current_solution else ""
-        )
-
-        self.current_solution = solution
-        print(f"{GREEN}✓ Exploration complete. Best score: {solution.best_score:.3f}{RESET}")
-
-    def _show_report(self):
-        """Show full exploration report."""
-        if not self.current_solution:
-            print(f"{YELLOW}No exploration report available.{RESET}")
-            return
-
-        print(self.current_solution.get_report())
-
-    def _clear_conversation(self):
+    def _clear_history(self):
         """Clear conversation history."""
         if self.agent:
             self.agent.clear_history()
-            print(f"{GREEN}✓ Conversation history cleared.{RESET}")
-        else:
-            print(f"{YELLOW}No conversation history to clear.{RESET}")
-
-    def _show_config(self):
-        """Show current configuration."""
-        print(f"\n{BOLD}Configuration:{RESET}\n")
-
-        config_dict = self.config.to_dict()
-
-        for key, value in config_dict.items():
-            if key == "llm":
-                print(f"{BOLD}LLM:{RESET}")
-                for k, v in value.items():
-                    if k == "api_key" and v:
-                        v = f"{v[:8]}..."  # Truncate API key
-                    print(f"  {k}: {v}")
-            else:
-                print(f"{BOLD}{key}:{RESET} {value}")
+        print(f"{GREEN}✓ Conversation history cleared.{RESET}")
 
 
 def main():
     """Main entry point."""
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="ALPHACODE: MCTS-based code exploration"
-    )
-
-    parser.add_argument(
-        "--config", "-c",
-        type=str,
-        help="Path to config file"
-    )
-
-    parser.add_argument(
-        "--model", "-m",
-        type=str,
-        help="LLM model to use"
-    )
-
-    parser.add_argument(
-        "--iterations", "-i",
-        type=int,
-        help="Max iterations"
-    )
-
-    parser.add_argument(
-        "--working-dir", "-d",
-        type=str,
-        help="Working directory"
-    )
-
-    parser.add_argument(
-        "--api-key", "-k",
-        type=str,
-        help="LLM API key (or set NVIDIA_API_KEY/OPENAI_API_KEY env var)"
-    )
-
-    args = parser.parse_args()
-
-    # Determine working directory first
-    working_dir = os.path.abspath(args.working_dir) if args.working_dir else os.getcwd()
-
-    # Change directory early
-    if args.working_dir:
-        os.chdir(working_dir)
-
-    # Load config - try multiple locations
-    config = None
-
-    # 1. Explicit config file
-    if args.config:
-        config = MCTSConfig.from_yaml(args.config)
-
-    # 2. Working directory config (now we're in working dir)
-    elif os.path.exists("config.yaml"):
-        config = MCTSConfig.from_yaml("config.yaml")
-
-    # 3. Project root config (where the package is installed)
-    else:
-        try:
-            import alphacode
-            package_dir = os.path.dirname(alphacode.__file__)
-            project_root = os.path.dirname(package_dir)
-            config_path = os.path.join(project_root, "config.yaml")
-            if os.path.exists(config_path):
-                config = MCTSConfig.from_yaml(config_path)
-        except Exception:
-            pass
-
-    # 4. Default config
-    if config is None:
-        config = MCTSConfig()
-
-    # Override with command line args
-    if args.model:
-        config.llm.model = args.model
-
-    if args.api_key:
-        config.llm.api_key = args.api_key
-
-    if args.iterations:
-        config.max_iterations = args.iterations
-
-    # Ensure API key is set
-    if not config.llm.api_key:
-        config.llm.api_key = os.environ.get("NVIDIA_API_KEY") or os.environ.get("OPENAI_API_KEY")
-
-    # Run CLI
+    config = MCTSConfig()
     cli = MCTSCli(config)
     cli.run()
 

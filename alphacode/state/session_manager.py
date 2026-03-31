@@ -14,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from alphacode.state.dual_git_manager import DualGitManager
 from alphacode.state.git_manager import GitStateManager
 
 logger = logging.getLogger(__name__)
@@ -110,16 +111,26 @@ class SessionManager:
         └── evaluations.db          # Evaluation cache
     """
 
-    def __init__(self, root_path: str = None, git_manager: GitStateManager = None):
+    def __init__(self, root_path: str = None, git_manager = None, use_dual_git: bool = True):
         """
         Initialize session manager.
 
         Args:
             root_path: Root directory path
-            git_manager: Optional Git state manager
+            git_manager: Optional Git state manager (deprecated, use_dual_git preferred)
+            use_dual_git: Whether to use dual Git separation (conversation vs code)
         """
         self.root_path = root_path or os.getcwd()
-        self.git_manager = git_manager or GitStateManager(root_path=self.root_path)
+        
+        # Use dual Git manager for clean separation
+        if use_dual_git:
+            self.dual_git = DualGitManager(root_path=self.root_path)
+            self.git_manager = self.dual_git.conversation
+            self.code_git = self.dual_git.code
+        else:
+            self.dual_git = None
+            self.git_manager = git_manager or GitStateManager(root_path=self.root_path)
+            self.code_git = self.git_manager
 
         # Session storage paths
         self.alphacode_dir = os.path.join(self.root_path, ".alphacode")

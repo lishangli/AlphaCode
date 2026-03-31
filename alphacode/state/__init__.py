@@ -2,6 +2,7 @@
 State management module.
 """
 
+from alphacode.state.dual_git_manager import DualGitManager
 from alphacode.state.git_manager import GitStateManager
 from alphacode.state.session_manager import (
     SessionEvent,
@@ -13,6 +14,7 @@ from alphacode.state.session_manager import (
 
 __all__ = [
     "GitStateManager",
+    "DualGitManager",
     "SessionManager",
     "SessionState",
     "SessionEvent",

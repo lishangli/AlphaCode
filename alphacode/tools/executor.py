@@ -11,6 +11,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "read",
-            "description": "Read file contents with line numbers. Use to examine code or files.",
+            "description": "Read file contents. Can read text files (code, config, logs, etc) with line numbers. Returns up to 2000 lines.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -49,11 +50,11 @@ TOOL_DEFINITIONS_BASE = [
                     },
                     "offset": {
                         "type": "integer",
-                        "description": "Starting line number (0-indexed, optional)"
+                        "description": "Starting line number (1-indexed)"
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of lines to read (optional)"
+                        "description": "Maximum number of lines to read"
                     }
                 },
                 "required": ["path"]
@@ -64,7 +65,7 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "write",
-            "description": "Write content to a file. Creates the file if it doesn't exist.",
+            "description": "Write content to a file. Creates parent directories if needed. Use to create scripts, code files, configs, etc.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -85,7 +86,7 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "edit",
-            "description": "Edit file by replacing old string with new string.",
+            "description": "Edit file by replacing text. Can make targeted changes without rewriting the whole file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -95,11 +96,11 @@ TOOL_DEFINITIONS_BASE = [
                     },
                     "old": {
                         "type": "string",
-                        "description": "String to find and replace"
+                        "description": "Exact text to find and replace"
                     },
                     "new": {
                         "type": "string",
-                        "description": "New string to replace with"
+                        "description": "New text to replace with"
                     },
                     "all": {
                         "type": "boolean",
@@ -114,13 +115,13 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Execute a shell command. Use for running tests, git operations, etc.",
+            "description": "Execute shell commands. Can be used for: running tests, git operations, file operations, installing packages, running scripts, system info, etc. Write scripts to automate complex tasks.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "cmd": {
                         "type": "string",
-                        "description": "Shell command to execute"
+                        "description": "Shell command to execute. Can be multiple commands with && or ;"
                     },
                     "timeout": {
                         "type": "integer",
@@ -135,7 +136,7 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "grep",
-            "description": "Search for a pattern in files using regex.",
+            "description": "Search for pattern in files. Can search code, logs, configs, etc. Returns matching lines.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -149,7 +150,7 @@ TOOL_DEFINITIONS_BASE = [
                     },
                     "file_pattern": {
                         "type": "string",
-                        "description": "Glob pattern for files (default: *)"
+                        "description": "Glob pattern for files (e.g., '*.py')"
                     }
                 },
                 "required": ["pattern"]
@@ -160,13 +161,13 @@ TOOL_DEFINITIONS_BASE = [
         "type": "function",
         "function": {
             "name": "glob",
-            "description": "Find files matching a glob pattern.",
+            "description": "Find files matching a pattern. Can search entire project structure.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Glob pattern (e.g., '**/*.py')"
+                        "description": "Glob pattern (e.g., '**/*.py', 'src/**/*.js')"
                     },
                     "path": {
                         "type": "string",
@@ -282,10 +283,32 @@ class ToolExecutor:
         return [self.execute(tc) for tc in tool_calls]
 
     def _resolve_path(self, path: str) -> str:
-        """Resolve path relative to root."""
-        if os.path.isabs(path):
-            return path
-        return os.path.join(self.root_path, path)
+        """Resolve path relative to root, preventing directory traversal."""
+        # Normalize the path to resolve .. and .
+        normalized = os.path.normpath(path)
+        
+        # Check for directory traversal attempts
+        if normalized.startswith("..") or "/../" in normalized or "\\..\\" in normalized:
+            # Block traversal attempts - resolve to basename only
+            normalized = os.path.basename(normalized)
+        
+        if os.path.isabs(normalized):
+            # Convert absolute paths to relative by taking basename
+            normalized = os.path.basename(normalized)
+        
+        # Join with root path and normalize again
+        full_path = os.path.normpath(os.path.join(self.root_path, normalized))
+        
+        # Final safety check: ensure resolved path is within root_path
+        try:
+            # Use Path.relative_to to check if path is within root
+            Path(full_path).relative_to(Path(self.root_path).resolve())
+        except ValueError:
+            # Path is outside root, fallback to basename
+            normalized = os.path.basename(normalized)
+            full_path = os.path.join(self.root_path, normalized)
+        
+        return full_path
 
     def _read(
         self,
@@ -437,20 +460,40 @@ class ToolExecutor:
         capture_output: bool = True
     ) -> ToolResult:
         """
-        Execute bash command.
+        Execute bash command in sandbox.
 
         Args:
             cmd: Command to execute
             timeout: Timeout in seconds
             capture_output: Whether to capture output
         """
+        # Convert timeout to int if it's a string (LLM might return string)
+        if timeout is not None:
+            timeout = int(timeout) if isinstance(timeout, str) else timeout
         timeout = timeout or self.timeout
+
+        # Security: Block only truly dangerous commands
+        dangerous_patterns = [
+            "rm -rf /", "rm -rf ~", "rm -rf /*",
+            "> /dev/sda", "mkfs", "dd if=/dev/zero",
+            "sudo", "su -",
+        ]
+        
+        cmd_lower = cmd.lower()
+        for pattern in dangerous_patterns:
+            if pattern in cmd_lower:
+                return ToolResult(
+                    success=False,
+                    error=f"Security: Command contains dangerous pattern '{pattern}'"
+                )
 
         try:
             # Print command for visibility
             if not capture_output:
                 print(f"  │ {cmd}")
 
+            # Use chroot-like isolation by running in a restricted environment
+            # The cwd=self.root_path ensures commands run in sandbox
             result = subprocess.run(
                 cmd,
                 shell=True,

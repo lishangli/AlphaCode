@@ -18,7 +18,7 @@ from alphacode.evaluation.evaluator import CascadeEvaluator
 from alphacode.llm.client import LLMClient
 from alphacode.llm.intent import IntentDetector, IntentResult, IntentType
 from alphacode.llm.prompts import PromptBuilder
-from alphacode.state.git_manager import GitStateManager
+from alphacode.state.dual_git_manager import DualGitManager
 from alphacode.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -91,8 +91,12 @@ class MCTSController:
     def __init__(self, config: MCTSConfig):
         self.config = config
 
-        # Core components
-        self.git_manager = GitStateManager(branch_prefix=config.git_branch_prefix)
+        # Core components - use dual Git manager for clean separation
+        self.dual_git = DualGitManager(
+            root_path=os.getcwd(),
+            use_separate_code_git=True,
+        )
+        self.git_manager = self.dual_git.code
         self.tool_executor = ToolExecutor(root_path=self.git_manager.root_path)
         self.evaluator = CascadeEvaluator(config=config, llm_client=None)
         self.prompt_builder = PromptBuilder()

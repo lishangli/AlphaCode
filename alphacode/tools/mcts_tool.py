@@ -46,48 +46,32 @@ class MCTSExploreTool:
         "type": "function",
         "function": {
             "name": "mcts_explore",
-            "description": """探索和优化代码的多种实现方案。
-
-适用于：
-- 复杂算法问题（排序、搜索、动态规划等）
-- 需要性能优化的代码
-- 不确定最佳实现方式的情况
-- 用户要求"优化"、"试试其他方法"
-
-不适用于：
-- 简单的一行代码
-- 配置文件、文档
-- 已确定实现方式的简单任务
-
-返回最佳代码方案和备选方案。""",
+            "description": "Explore and optimize code implementations. Returns best solution and alternatives.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "goal": {
                         "type": "string",
-                        "description": "代码目标描述，如'实现快速排序算法'或'优化斐波那契函数性能'"
+                        "description": "Code goal description, e.g., 'implement quicksort' or 'optimize fibonacci'"
                     },
                     "initial_code": {
                         "type": "string",
-                        "description": "可选：初始代码，如果不提供则从头探索"
+                        "description": "Optional: initial code to improve. If not provided, explores from scratch."
                     },
                     "iterations": {
                         "type": "integer",
-                        "description": "探索迭代次数，默认10，复杂问题可增加到20-30",
+                        "description": "Number of exploration iterations. Default 10, increase for complex problems.",
                         "default": 10
                     },
                     "focus": {
                         "type": "string",
                         "enum": ["performance", "readability", "correctness", "balanced"],
-                        "description": (
-                    "优化重点：performance=性能, "
-                    "readability=可读性, correctness=正确性, balanced=平衡"
-                ),
+                        "description": "Optimization focus",
                         "default": "balanced"
                     },
                     "test_cases": {
                         "type": "string",
-                        "description": "可选：测试用例，用于验证代码正确性",
+                        "description": "Optional: test cases to verify correctness",
                     }
                 },
                 "required": ["goal"]

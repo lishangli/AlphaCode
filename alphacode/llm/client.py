@@ -28,11 +28,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class LLMResponse:
-    """LLM response."""
+    """LLM response with detailed metrics."""
     content: str
     model: str
     usage: dict[str, int]
     latency: float
+    # Performance metrics
+    tokens_per_second: float = 0.0
     # Entropy information
     entropy: float = 0.5
     confidence: float = 0.5
@@ -234,15 +236,26 @@ class LLMClient:
                 confidence = entropy_result.confidence
                 entropy_decision = entropy_result.decision
 
+            # Calculate detailed metrics
+            prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+            completion_tokens = response.usage.completion_tokens if response.usage else 0
+            total_tokens = response.usage.total_tokens if response.usage else 0
+            latency = time.time() - start_time
+            tokens_per_second = completion_tokens / latency if latency > 0 else 0
+
             result = LLMResponse(
                 content=content,
                 model=response.model or self.model,
                 usage={
-                    "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-                    "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-                    "total_tokens": response.usage.total_tokens if response.usage else 0,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
                 },
-                latency=time.time() - start_time,
+                latency=latency,
+                tokens_per_second=tokens_per_second,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
                 entropy=entropy,
                 confidence=confidence,
                 logprobs=token_logprobs,
